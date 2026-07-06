@@ -14,10 +14,19 @@ RUN npm ci --omit=dev
 COPY backend/ .
 COPY --from=frontend-build /app/frontend/dist /app/frontend/dist
 
-# The Coverage Intelligence Agent scans this directory for existing test
-# coverage (config.automation.repoPath resolves to /app/tests in this image).
-COPY tests/playwright /app/tests/playwright
+# Real Playwright test environment — the platform executes these specs
+# directly (no simulated runner), so the package, config, and a real browser
+# all need to be present in the image, not just the spec files.
+WORKDIR /app/tests
+COPY tests/package*.json ./
+RUN npm ci
+COPY tests/playwright.config.js ./
+COPY tests/playwright ./playwright
+# Only chromium is installed to keep image size/build time reasonable —
+# playwrightRunner.service.js pins PROJECT='chromium' to match.
+RUN npx playwright install --with-deps chromium
 
+WORKDIR /app/backend
 ENV NODE_ENV=production
 EXPOSE 3001
 CMD ["node", "--experimental-sqlite", "src/index.js"]

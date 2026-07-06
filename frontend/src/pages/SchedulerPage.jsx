@@ -98,9 +98,13 @@ export default function SchedulerPage() {
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
               >
                 <option value="full_regression">Full Regression</option>
-                <option value="smoke">Smoke Tests</option>
-                <option value="api">API Tests</option>
-                <option value="ui">UI Tests</option>
+                <option value="smoke">Smoke Tests (@smoke)</option>
+                <option value="regression">Regression Tests (@regression)</option>
+                <option value="login">Login / Auth</option>
+                <option value="cart">Cart</option>
+                <option value="checkout">Checkout</option>
+                <option value="inventory">Inventory / Products</option>
+                <option value="e2e">End-to-End Purchase</option>
               </select>
             </div>
             <div>

@@ -1,16 +1,19 @@
 import { formatDistanceToNow, format, isValid } from 'date-fns';
 
 /**
- * SQLite stores dates as "2026-07-03 10:01:37" (space separator).
- * JS Date constructor needs ISO 8601 "2026-07-03T10:01:37".
- * This normalises both formats safely.
+ * SQLite stores dates as "2026-07-03 10:01:37" (space separator) via
+ * CURRENT_TIMESTAMP — which is always UTC, but has no timezone designator.
+ * Without one, `new Date(...)` parses it as *local* time, skewing every
+ * relative/absolute time display by the browser's UTC offset. Normalise to
+ * ISO 8601 and force UTC when no timezone is already present.
  */
 export function parseDate(raw) {
   if (!raw) return null;
   // Already a Date object
   if (raw instanceof Date) return isValid(raw) ? raw : null;
   // Replace space separator with T to ensure ISO 8601 parsing
-  const normalised = String(raw).replace(' ', 'T');
+  let normalised = String(raw).replace(' ', 'T');
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(normalised)) normalised += 'Z';
   const d = new Date(normalised);
   return isValid(d) ? d : null;
 }

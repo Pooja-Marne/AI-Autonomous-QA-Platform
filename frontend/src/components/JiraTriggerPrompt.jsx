@@ -14,27 +14,21 @@ const SUITES = [
   {
     value: 'full_regression',
     label: 'Full Regression',
-    desc: 'All modules — auth, UI, API, database, services (~28 tests)',
+    desc: 'Every Playwright spec — auth, cart, checkout, inventory, e2e',
     icon: '🔁',
     recommended: true,
   },
   {
     value: 'smoke',
     label: 'Smoke Tests',
-    desc: 'Critical path only — fastest pass/fail signal (~3 tests)',
+    desc: 'Tests tagged @smoke — fastest pass/fail signal',
     icon: '💨',
   },
   {
-    value: 'api',
-    label: 'API Suite',
-    desc: 'All API endpoints — best for backend story changes (~7 tests)',
-    icon: '🔌',
-  },
-  {
-    value: 'ui',
-    label: 'UI Suite',
-    desc: 'Component and page tests — best for frontend story changes (~5 tests)',
-    icon: '🖥️',
+    value: 'regression',
+    label: 'Regression Suite',
+    desc: 'Tests tagged @regression',
+    icon: '🧪',
   },
 ];
 

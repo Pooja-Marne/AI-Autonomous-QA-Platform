@@ -219,9 +219,9 @@ async function respondToTrigger(triggerId, { decision, suite, customModules }) {
     return { action: 'dismissed' };
   }
 
-  // User chose to run tests — import testRunner here to avoid circular deps
-  const { startTestRun } = require('./testRunner.service');
-  const result = await startTestRun({
+  // User chose to run tests — import playwrightRunner here to avoid circular deps
+  const { startPlaywrightRun } = require('./playwrightRunner.service');
+  const result = await startPlaywrightRun({
     suite: suite || 'full_regression',
     trigger: 'jira_trigger',
     jiraIssueKey: trigger.jira_key,

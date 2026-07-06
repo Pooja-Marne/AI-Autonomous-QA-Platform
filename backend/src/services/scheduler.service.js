@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const { v4: uuidv4 } = require('uuid');
 const { getDatabase } = require('../config/database');
-const { startTestRun } = require('./testRunner.service');
+const { startPlaywrightRun } = require('./playwrightRunner.service');
 
 const activeJobs = new Map();
 
@@ -25,7 +25,7 @@ function seedDefaultSchedules() {
     const defaults = [
       { id: uuidv4(), name: 'Nightly Full Regression', cron_expression: '0 2 * * *', test_suite: 'full_regression', trigger_type: 'scheduled' },
       { id: uuidv4(), name: 'Hourly Smoke Test', cron_expression: '0 * * * *', test_suite: 'smoke', trigger_type: 'scheduled' },
-      { id: uuidv4(), name: 'Daily API Tests', cron_expression: '0 9 * * 1-5', test_suite: 'api', trigger_type: 'scheduled' },
+      { id: uuidv4(), name: 'Daily Regression Tests', cron_expression: '0 9 * * 1-5', test_suite: 'regression', trigger_type: 'scheduled' },
     ];
 
     const insert = db.prepare(`
@@ -50,7 +50,7 @@ function scheduleJob(scheduleConfig) {
   const job = cron.schedule(scheduleConfig.cron_expression, async () => {
     console.log(`[Scheduler] Triggering: ${scheduleConfig.name}`);
     try {
-      await startTestRun({ suite: scheduleConfig.test_suite || 'full_regression', trigger: 'scheduled' });
+      await startPlaywrightRun({ suite: scheduleConfig.test_suite || 'full_regression', trigger: 'scheduled' });
       const db = getDatabase();
       db.prepare('UPDATE scheduler_config SET last_run = CURRENT_TIMESTAMP WHERE id = ?').run(scheduleConfig.id);
     } catch (err) {

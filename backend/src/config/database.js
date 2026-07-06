@@ -232,6 +232,10 @@ function initializeSchema(db) {
     db.exec('ALTER TABLE pending_triggers ADD COLUMN coverage_summary TEXT');
   }
 
+  // The automation repo is UI-only (SauceDemo) — no real 'api'/'ui' tagged
+  // suite exists. Migrate any schedules seeded before this was known.
+  db.exec(`UPDATE scheduler_config SET test_suite = 'regression' WHERE test_suite IN ('api', 'ui')`);
+
   console.log('[DB] Schema initialized successfully');
 }
 

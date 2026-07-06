@@ -8,31 +8,29 @@ const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 
 const TESTS_DIR = path.resolve(__dirname, '../../../tests');
-const RESULTS_FILE = path.join(TESTS_DIR, 'playwright-results.json');
+
+// Only 'chromium' has its browser binary installed in the production image
+// (see Dockerfile) — keep this in sync with whatever `playwright install`
+// actually installs there.
+const PROJECT = 'chromium';
 
 const SUITE_PATTERNS = {
-  smoke:          '--grep @smoke',
-  full_regression: '',
-  api:            '--grep @api',
-  ui:             '--grep @ui',
-  cart:           'playwright/specs/cart',
-  checkout:       'playwright/specs/checkout',
-  login:          'playwright/specs/auth',
-  inventory:      'playwright/specs/inventory',
-  e2e:            'playwright/specs/e2e',
+  full_regression: [],
+  smoke: ['--grep', '@smoke'],
+  regression: ['--grep', '@regression'],
+  login: ['specs/auth/'],
+  cart: ['specs/cart/'],
+  checkout: ['specs/checkout/'],
+  inventory: ['specs/inventory/'],
+  e2e: ['specs/e2e/'],
 };
 
 async function runPlaywrightTests(suite = 'smoke') {
   return new Promise((resolve, reject) => {
-    const pattern = SUITE_PATTERNS[suite] ?? SUITE_PATTERNS.smoke;
-    const args = [
-      'playwright', 'test',
-      '--reporter=json',
-      '--output', RESULTS_FILE,
-      ...(pattern ? pattern.split(' ') : []),
-    ];
+    const extraArgs = SUITE_PATTERNS[suite] ?? SUITE_PATTERNS.smoke;
+    const args = ['playwright', 'test', '--reporter=json', `--project=${PROJECT}`, ...extraArgs];
 
-    console.log(`[Playwright] Running: npx ${args.join(' ')}`);
+    console.log(`[Playwright] Running: npx ${args.join(' ')} (cwd=${TESTS_DIR})`);
 
     const proc = spawn('npx', args, {
       cwd: TESTS_DIR,
@@ -48,7 +46,9 @@ async function runPlaywrightTests(suite = 'smoke') {
 
     proc.on('close', (code) => {
       console.log(`[Playwright] Exit code: ${code}`);
-      // Playwright exits with 1 when tests fail — that's normal, not an error
+      // Playwright exits with 1 when tests fail — that's normal, not an error.
+      // Only log stderr when something actually looks wrong, to keep logs clean.
+      if (code !== 0 && code !== 1) console.error(`[Playwright] stderr:\n${stderr.slice(0, 3000)}`);
       resolve({ stdout, stderr, exitCode: code });
     });
 
@@ -57,28 +57,14 @@ async function runPlaywrightTests(suite = 'smoke') {
 }
 
 function parsePlaywrightResults(rawOutput) {
-  // Try to extract the JSON blob from stdout (Playwright JSON reporter outputs to stdout)
   try {
-    // stdout may contain logs before the JSON — find the first '{'
     const jsonStart = rawOutput.indexOf('{');
     if (jsonStart !== -1) {
-      const jsonStr = rawOutput.substring(jsonStart);
-      return JSON.parse(jsonStr);
+      return JSON.parse(rawOutput.substring(jsonStart));
     }
   } catch {
     /* fall through */
   }
-
-  // Try reading the results file Playwright wrote
-  try {
-    if (fs.existsSync(RESULTS_FILE)) {
-      const content = fs.readFileSync(RESULTS_FILE, 'utf-8');
-      return JSON.parse(content);
-    }
-  } catch {
-    /* fall through */
-  }
-
   return null;
 }
 
@@ -105,8 +91,8 @@ function mapPlaywrightResults(pwResults) {
             filePath: file,
             status,
             duration_ms: result.duration || 0,
-            errorMessage: error?.message?.replace(/\u001b\[[0-9;]*m/g, '').substring(0, 500) || null,
-            stackTrace: error?.stack?.replace(/\u001b\[[0-9;]*m/g, '').substring(0, 2000) || null,
+            errorMessage: error?.message?.replace(/\[[0-9;]*m/g, '').substring(0, 500) || null,
+            stackTrace: error?.stack?.replace(/\[[0-9;]*m/g, '').substring(0, 2000) || null,
           });
         }
       }
@@ -135,7 +121,7 @@ async function startPlaywrightRun({ suite = 'smoke', trigger = 'manual', jiraIss
   const db = getDatabase();
   const runId = uuidv4();
   const suiteName = suite.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  const runName = `${suiteName} - ${new Date().toISOString().split('T')[0]} [Playwright]`;
+  const runName = `${suiteName} - ${new Date().toISOString().split('T')[0]}`;
 
   console.log(`[Playwright Runner] Starting run ${runId} | Suite: ${suite}`);
 
@@ -160,17 +146,27 @@ async function runAndProcess(runId, suite, runName, trigger) {
   const failedCases = [];
 
   try {
-    const { stdout, exitCode } = await runPlaywrightTests(suite);
+    const { stdout, stderr, exitCode } = await runPlaywrightTests(suite);
     const pwResults = parsePlaywrightResults(stdout);
 
     if (!pwResults) {
-      console.warn('[Playwright Runner] Could not parse results — marking run as failed');
-      db.prepare(`UPDATE test_runs SET status='failed', total_tests=0 WHERE id=?`).run(runId);
+      console.error(`[Playwright Runner] Could not parse results (exit ${exitCode}) — marking run as failed. stderr:\n${stderr.slice(0, 2000)}`);
+      db.prepare(`UPDATE test_runs SET status='failed', total_tests=0, completed_at=? WHERE id=?`).run(new Date().toISOString(), runId);
       return;
     }
 
     const testCases = mapPlaywrightResults(pwResults);
     console.log(`[Playwright Runner] Parsed ${testCases.length} test cases`);
+
+    if (testCases.length === 0) {
+      console.error(`[Playwright Runner] 0 tests matched suite "${suite}" — treating as a failed run, not a pass. stderr:\n${stderr.slice(0, 2000)}`);
+      db.prepare(`
+        UPDATE test_runs SET status='failed', total_tests=0, completed_at=?,
+          duration_ms=CAST((julianday(?)-julianday(started_at))*86400000 AS INTEGER)
+        WHERE id=?
+      `).run(new Date().toISOString(), new Date().toISOString(), runId);
+      return;
+    }
 
     db.prepare(`UPDATE test_runs SET total_tests=? WHERE id=?`).run(testCases.length, runId);
 
@@ -228,4 +224,65 @@ async function runAndProcess(runId, suite, runName, trigger) {
   }
 }
 
-module.exports = { startPlaywrightRun };
+async function getRunById(runId) {
+  const db = getDatabase();
+  const run = db.prepare('SELECT * FROM test_runs WHERE id = ?').get(runId);
+  if (!run) return null;
+
+  const testCases = db.prepare(`
+    SELECT tc.*,
+      ji.summary      AS jira_summary,
+      ji.status       AS jira_status,
+      ji.priority     AS jira_priority,
+      ji.assignee     AS jira_assignee,
+      ji.type         AS jira_issue_type,
+      ji.description  AS jira_description
+    FROM test_cases tc
+    LEFT JOIN jira_issues ji ON tc.jira_issue_key = ji.key
+    WHERE tc.run_id = ?
+    ORDER BY tc.created_at
+  `).all(runId).map((tc) => ({
+    ...tc,
+    jira_url: tc.jira_issue_key
+      ? `${require('../config/config').jira.baseUrl}/browse/${tc.jira_issue_key}`
+      : null,
+  }));
+
+  const healingActions = db.prepare('SELECT * FROM healing_actions WHERE run_id = ? ORDER BY created_at').all(runId);
+  return { ...run, testCases, healingActions };
+}
+
+async function getAllRuns({ page = 1, limit = 20 } = {}) {
+  const db = getDatabase();
+  const offset = (page - 1) * limit;
+  const runs = db.prepare('SELECT * FROM test_runs ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+  const total = db.prepare('SELECT COUNT(*) as count FROM test_runs').get().count;
+  return { runs, total, page, limit };
+}
+
+async function getTestStats() {
+  const db = getDatabase();
+  const overall = db.prepare(`
+    SELECT
+      COUNT(*) as total_runs,
+      SUM(passed) as total_passed,
+      SUM(failed) as total_failed,
+      SUM(healed) as total_healed,
+      SUM(not_fixable) as total_not_fixable,
+      SUM(total_tests) as total_test_cases,
+      AVG(CASE WHEN total_tests > 0 THEN CAST(passed AS REAL) / total_tests * 100 ELSE 0 END) as avg_pass_rate,
+      AVG(CASE WHEN total_tests > 0 THEN CAST(healed AS REAL) / total_tests * 100 ELSE 0 END) as avg_healing_rate
+    FROM test_runs WHERE status NOT IN ('running', 'pending')
+  `).get();
+
+  const recentRuns = db.prepare('SELECT * FROM test_runs ORDER BY created_at DESC LIMIT 10').all();
+  const failuresByModule = db.prepare(`
+    SELECT module, COUNT(*) as failures, SUM(CASE WHEN healing_status = 'healed' THEN 1 ELSE 0 END) as healed
+    FROM test_cases WHERE status IN ('failed', 'healed')
+    GROUP BY module ORDER BY failures DESC LIMIT 10
+  `).all();
+
+  return { overall, recentRuns, failuresByModule };
+}
+
+module.exports = { startPlaywrightRun, getRunById, getAllRuns, getTestStats };

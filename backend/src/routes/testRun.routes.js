@@ -1,19 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { startTestRun, getRunById, getAllRuns, getTestStats } = require('../services/testRunner.service');
-const { startPlaywrightRun } = require('../services/playwrightRunner.service');
+const { startPlaywrightRun, getRunById, getAllRuns, getTestStats } = require('../services/playwrightRunner.service');
 const { getDatabase } = require('../config/database');
 
 router.post('/', async (req, res) => {
   try {
-    const { suite, trigger, branch, prNumber, jiraIssueKey, mode } = req.body;
-    // mode='playwright' runs actual Playwright specs; default runs simulated runner
-    let result;
-    if (mode === 'playwright') {
-      result = await startPlaywrightRun({ suite, trigger: trigger || 'manual', jiraIssueKey });
-    } else {
-      result = await startTestRun({ suite, trigger: trigger || 'manual', branch, prNumber, jiraIssueKey });
-    }
+    const { suite, trigger, jiraIssueKey } = req.body;
+    const result = await startPlaywrightRun({ suite, trigger: trigger || 'manual', jiraIssueKey });
     res.status(202).json({ success: true, data: result, message: 'Test run started successfully' });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
