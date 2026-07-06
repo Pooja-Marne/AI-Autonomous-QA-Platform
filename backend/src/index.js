@@ -14,7 +14,6 @@ const { errorHandler, notFoundHandler, logger } = require('./middleware/errorHan
 
 const testRunRoutes = require('./routes/testRun.routes');
 const jiraRoutes = require('./routes/jira.routes');
-const githubRoutes = require('./routes/github.routes');
 const healingRoutes = require('./routes/healing.routes');
 const reportsRoutes = require('./routes/reports.routes');
 const schedulerRoutes = require('./routes/scheduler.routes');
@@ -62,7 +61,6 @@ app.get('/api/status', (req, res) => {
 
 app.use('/api/runs', testRunRoutes);
 app.use('/api/jira', jiraRoutes);
-app.use('/api/github', githubRoutes);
 app.use('/api/healing', healingRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/scheduler', schedulerRoutes);
@@ -98,7 +96,7 @@ async function bootstrap() {
     app.listen(PORT, () => {
       logger.info(`[Server] AI QA Platform running on http://localhost:${PORT}`);
       logger.info(`[Server] Environment: ${config.server.nodeEnv}`);
-      logger.info('[Endpoints] /api/runs | /api/jira | /api/github | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/coverage');
+      logger.info('[Endpoints] /api/runs | /api/jira | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/coverage');
     });
   } catch (err) {
     logger.error('Bootstrap failed:', err);

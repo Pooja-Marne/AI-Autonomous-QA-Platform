@@ -70,7 +70,7 @@ Jira Issue:
   Fix Version: ${JSON.stringify(issue.fixVersions || [])}
   Priority: ${issue.priority}
 
-Related Code Changes (from GitHub):
+Related Code Changes:
   Commits: ${codeChanges.commits.length}
   Pull Requests: ${codeChanges.prs.length}
   Changed Modules: ${JSON.stringify(codeChanges.modules)}

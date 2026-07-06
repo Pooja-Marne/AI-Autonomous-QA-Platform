@@ -1,9 +1,28 @@
-const { searchCommitsByJiraKey, searchPRsByJiraKey, detectImpactedModules } = require('./github.service');
-
 const API_PATTERN = /(^|\/)(routes|controllers|api)(\/|\.)/i;
 const UI_PATTERN = /frontend\/src\/(pages|components)\//i;
 const DB_PATTERN = /(migrations|schema|models)\//i;
 const DB_FILE_PATTERN = /database\.js$/i;
+
+const MODULE_KEYWORDS = {
+  auth: ['auth', 'login', 'register', 'oauth', 'token'],
+  api: ['api', 'routes', 'endpoints', 'controllers'],
+  database: ['db', 'database', 'models', 'migrations', 'schema'],
+  ui: ['components', 'pages', 'views', 'frontend', 'src'],
+  tests: ['test', 'spec', 'e2e', '__tests__'],
+  config: ['config', 'env', 'settings'],
+  services: ['services', 'utils', 'helpers', 'lib'],
+};
+
+function detectImpactedModules(files) {
+  const impacted = new Set();
+  for (const file of files) {
+    const lower = file.toLowerCase();
+    for (const [module, keywords] of Object.entries(MODULE_KEYWORDS)) {
+      if (keywords.some((kw) => lower.includes(kw))) impacted.add(module);
+    }
+  }
+  return Array.from(impacted);
+}
 
 function classifyFiles(files) {
   const apis = new Set();
@@ -23,40 +42,29 @@ function classifyFiles(files) {
   };
 }
 
-// Step 3: correlate a Jira issue to real code changes via GitHub search.
+// Step 3 of the Coverage Intelligence Agent: correlate a Jira issue to real
+// code changes. There is no source-control integration wired up — this
+// always returns an empty (but correctly-shaped) result so the rest of the
+// pipeline degrades gracefully ("no code changes found") instead of failing.
 async function findRelatedCodeChanges(jiraKey) {
-  const [commits, prs] = await Promise.all([
-    searchCommitsByJiraKey(jiraKey),
-    searchPRsByJiraKey(jiraKey),
-  ]);
-
-  const allFiles = Array.from(new Set(prs.flatMap((pr) => pr.files || [])));
+  const commits = [];
+  const prs = [];
+  const allFiles = [];
   const { apis, uiPages, dbObjects } = classifyFiles(allFiles);
-  const modules = Array.from(new Set([
-    ...detectImpactedModules(allFiles),
-    ...prs.flatMap((pr) => pr.impactedModules || []),
-  ]));
-
-  const authors = Array.from(new Set([
-    ...commits.map((c) => c.author).filter(Boolean),
-    ...prs.map((pr) => pr.author).filter(Boolean),
-  ]));
-
-  const mergeDates = prs.map((pr) => pr.mergedAt).filter(Boolean);
 
   return {
     jiraKey,
     commits,
     prs,
     files: allFiles,
-    modules,
+    modules: detectImpactedModules(allFiles),
     apis,
     uiPages,
     dbObjects,
-    authors,
-    mergeDates,
-    hasCodeChanges: commits.length > 0 || prs.length > 0,
+    authors: [],
+    mergeDates: [],
+    hasCodeChanges: false,
   };
 }
 
-module.exports = { findRelatedCodeChanges };
+module.exports = { findRelatedCodeChanges, detectImpactedModules };

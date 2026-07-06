@@ -34,14 +34,6 @@ export const jiraApi = {
   addComment: (key, comment) => api.post(`/jira/issues/${key}/comment`, { comment }),
 };
 
-export const githubApi = {
-  getInfo: () => api.get('/github/info'),
-  getCommits: (params) => api.get('/github/commits', { params }),
-  getPRs: () => api.get('/github/prs'),
-  getBranches: () => api.get('/github/branches'),
-  getPRFiles: (number) => api.get(`/github/prs/${number}/files`),
-};
-
 export const healingApi = {
   analyze: (data) => api.post('/healing/analyze', data),
   heal: (testCaseId) => api.post(`/healing/heal/${testCaseId}`),

@@ -32,12 +32,6 @@ async function generateReport(runId) {
     testCase: tc.name,
   })))];
 
-  const gitLinks = run.commit_sha ? [{
-    sha: run.commit_sha,
-    url: `https://github.com/${config.github.owner}/${config.github.repo}/commit/${run.commit_sha}`,
-    branch: run.branch,
-  }] : [];
-
   const healingSuccessRate = healingActions.length
     ? ((healingActions.filter((h) => h.success).length / healingActions.length) * 100).toFixed(1)
     : 0;
@@ -55,7 +49,6 @@ async function generateReport(runId) {
     healingSummary,
     rootCauseAnalysis,
     jiraLinks: JSON.stringify(jiraLinks),
-    gitLinks: JSON.stringify(gitLinks),
     metrics: {
       totalTests: run.total_tests,
       passed: passed.length,
@@ -77,13 +70,12 @@ async function generateReport(runId) {
     },
     healingActions: healingActions.map(mapHealingActionForReport),
     jiraData: jiraLinks,
-    gitData: gitLinks,
   };
 
   db.prepare(`
-    INSERT OR REPLACE INTO reports (id, run_id, title, summary, healing_summary, jira_links, git_links)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(report.id, runId, report.title, summary, healingSummary, report.jiraLinks, report.gitLinks);
+    INSERT OR REPLACE INTO reports (id, run_id, title, summary, healing_summary, jira_links)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(report.id, runId, report.title, summary, healingSummary, report.jiraLinks);
 
   return report;
 }
@@ -169,7 +161,6 @@ function mapTestCaseForReport(tc) {
     healingStatus: tc.healing_status,
     healingAction: tc.healing_action,
     jiraLink: tc.jira_issue_key ? `${config.jira.baseUrl}/browse/${tc.jira_issue_key}` : null,
-    gitCommit: tc.git_commit,
     duration: tc.duration_ms,
   };
 }
@@ -195,7 +186,6 @@ async function getReportByRunId(runId) {
   return {
     ...report,
     jiraLinks: JSON.parse(report.jira_links || '[]'),
-    gitLinks: JSON.parse(report.git_links || '[]'),
   };
 }
 

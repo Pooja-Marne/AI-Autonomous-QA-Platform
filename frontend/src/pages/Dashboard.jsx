@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { CheckCircle, XCircle, Wrench, AlertTriangle, Play, RefreshCw, GitBranch, Ticket, TrendingUp, Activity, Clock, ExternalLink, Bug, BookOpen, CheckSquare, ChevronDown, ChevronUp } from 'lucide-react';
-import { runsApi, jiraApi, githubApi } from '../services/api';
+import { CheckCircle, XCircle, Wrench, AlertTriangle, Play, RefreshCw, Ticket, TrendingUp, Activity, Clock, ExternalLink, Bug, BookOpen, CheckSquare, ChevronDown, ChevronUp } from 'lucide-react';
+import { runsApi, jiraApi } from '../services/api';
 import StatCard from '../components/StatCard';
 import StatusBadge from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -94,7 +94,6 @@ export default function Dashboard() {
   const [runs, setRuns] = useState([]);
   const [jiraData, setJiraData] = useState(null);
   const [closedIssues, setClosedIssues] = useState([]);
-  const [githubData, setGithubData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -103,18 +102,16 @@ export default function Dashboard() {
     if (!silent) setLoading(true);
     else setRefreshing(true);
     try {
-      const [statsRes, runsRes, jiraRes, closedRes, ghRes] = await Promise.allSettled([
+      const [statsRes, runsRes, jiraRes, closedRes] = await Promise.allSettled([
         runsApi.getStats(),
         runsApi.getAll({ limit: 8 }),
         jiraApi.getCached(),
         jiraApi.getClosed(),
-        githubApi.getCommits({ count: 5 }),
       ]);
       if (statsRes.status === 'fulfilled') setStats(statsRes.value?.data);
       if (runsRes.status === 'fulfilled') setRuns(runsRes.value?.runs || []);
       if (jiraRes.status === 'fulfilled') setJiraData(jiraRes.value?.data || []);
       if (closedRes.status === 'fulfilled') setClosedIssues(closedRes.value?.data || []);
-      if (ghRes.status === 'fulfilled') setGithubData(ghRes.value?.data || []);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -247,28 +244,6 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-
-          {/* GitHub Widget */}
-          <div className="glass-card">
-            <div className="flex items-center justify-between p-4 border-b border-gray-800">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                <GitBranch className="w-4 h-4 text-gray-400" /> Recent Commits
-              </h3>
-              <Link to="/github" className="text-xs text-blue-400 hover:text-blue-300">View all →</Link>
-            </div>
-            <div className="p-3 space-y-2 max-h-52 overflow-y-auto">
-              {(!githubData || githubData.length === 0) ? (
-                <p className="text-xs text-gray-500 text-center py-4">No commits fetched</p>
-              ) : (
-                githubData.slice(0, 5).map((commit) => (
-                  <div key={commit.sha} className="flex items-start gap-2 p-2 rounded-lg bg-gray-800/40">
-                    <span className="text-xs font-mono text-yellow-400 flex-shrink-0">{commit.sha}</span>
-                    <p className="text-xs text-gray-300 truncate">{commit.message}</p>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
 
           {/* Module Stability */}
           {stats?.failuresByModule?.length > 0 && (

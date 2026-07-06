@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, PlayCircle, BarChart3, Wrench, Calendar, Github, Trello, Zap, Bell, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, PlayCircle, BarChart3, Wrench, Calendar, Trello, Zap, Bell, ShieldCheck, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 
 const nav = [
@@ -7,10 +7,10 @@ const nav = [
   { to: '/runs', label: 'Test Runs', icon: PlayCircle },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/healing', label: 'AI Healing', icon: Wrench },
+  { to: '/demo', label: 'AI Healing Demo', icon: Sparkles },
   { to: '/coverage', label: 'Coverage Intelligence', icon: ShieldCheck },
   { to: '/triggers', label: 'Jira Triggers', icon: Bell },
   { to: '/jira', label: 'Jira Issues', icon: Trello },
-  { to: '/github', label: 'GitHub', icon: Github },
   { to: '/scheduler', label: 'Scheduler', icon: Calendar },
 ];
 

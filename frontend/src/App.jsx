@@ -8,10 +8,10 @@ import RunDetails from './pages/RunDetails';
 import Analytics from './pages/Analytics';
 import HealingPage from './pages/HealingPage';
 import JiraPage from './pages/JiraPage';
-import GitHubPage from './pages/GitHubPage';
 import SchedulerPage from './pages/SchedulerPage';
 import TriggersPage from './pages/TriggersPage';
 import CoveragePage from './pages/CoveragePage';
+import DemoModePage from './pages/DemoModePage';
 import { triggersApi } from './services/api';
 
 function AppShell() {
@@ -56,10 +56,10 @@ function AppShell() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/healing" element={<HealingPage />} />
             <Route path="/jira" element={<JiraPage />} />
-            <Route path="/github" element={<GitHubPage />} />
             <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/triggers" element={<TriggersPage />} />
             <Route path="/coverage" element={<CoveragePage />} />
+            <Route path="/demo" element={<DemoModePage />} />
           </Routes>
         </div>
       </main>

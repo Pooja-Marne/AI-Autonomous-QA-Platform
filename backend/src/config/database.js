@@ -101,21 +101,6 @@ function initializeSchema(db) {
       fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
-    -- GitHub PRs / Commits Cache
-    CREATE TABLE IF NOT EXISTS git_changes (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      sha TEXT,
-      branch TEXT,
-      title TEXT,
-      author TEXT,
-      message TEXT,
-      files_changed TEXT,
-      impacted_modules TEXT,
-      url TEXT,
-      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
     -- Scheduler Config
     CREATE TABLE IF NOT EXISTS scheduler_config (
       id TEXT PRIMARY KEY,

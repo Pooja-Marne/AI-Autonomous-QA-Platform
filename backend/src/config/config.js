@@ -29,12 +29,6 @@ module.exports = {
   automation: {
     repoPath: process.env.AUTOMATION_REPO_PATH || path.resolve(__dirname, '..', '..', '..', 'tests'),
   },
-  github: {
-    token: process.env.GITHUB_TOKEN,
-    owner: process.env.GITHUB_OWNER,
-    repo: process.env.GITHUB_REPO,
-    baseBranch: process.env.GITHUB_BASE_BRANCH || 'master',
-  },
   slack: {
     webhookUrl: process.env.SLACK_WEBHOOK_URL,
   },
