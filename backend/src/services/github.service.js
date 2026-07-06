@@ -116,6 +116,57 @@ async function fetchRepoInfo() {
   }
 }
 
+// Step 3 of the Coverage Intelligence Agent: find commits/PRs that reference a
+// Jira key in their message/title (e.g. "SCRUM-123 fix login bug").
+async function searchCommitsByJiraKey(jiraKey) {
+  try {
+    const res = await githubClient.get('/search/commits', {
+      params: { q: `${jiraKey} repo:${owner}/${repo}`, per_page: 20 },
+      headers: { Accept: 'application/vnd.github.cloak-preview+json' },
+    });
+    return (res.data.items || []).map((c) => ({
+      sha: c.sha.substring(0, 7),
+      fullSha: c.sha,
+      message: c.commit.message.split('\n')[0],
+      author: c.commit.author?.name || c.author?.login || 'Unknown',
+      date: c.commit.author?.date,
+      url: c.html_url,
+    }));
+  } catch (err) {
+    console.error(`[GitHub] searchCommitsByJiraKey(${jiraKey}) error:`, err.message);
+    return [];
+  }
+}
+
+async function searchPRsByJiraKey(jiraKey) {
+  try {
+    const res = await githubClient.get('/search/issues', {
+      params: { q: `${jiraKey} repo:${owner}/${repo} type:pr`, per_page: 20 },
+    });
+    const prs = await Promise.all(
+      (res.data.items || []).map(async (item) => {
+        const files = await fetchChangedFilesForPR(item.number).catch(() => []);
+        const filenames = files.map((f) => f.filename);
+        return {
+          number: item.number,
+          title: item.title,
+          author: item.user?.login,
+          state: item.state,
+          merged: !!item.pull_request?.merged_at,
+          mergedAt: item.pull_request?.merged_at || null,
+          files: filenames,
+          impactedModules: detectImpactedModules(filenames),
+          url: item.html_url,
+        };
+      })
+    );
+    return prs;
+  } catch (err) {
+    console.error(`[GitHub] searchPRsByJiraKey(${jiraKey}) error:`, err.message);
+    return [];
+  }
+}
+
 function detectImpactedModules(files) {
   const moduleMap = {
     auth: ['auth', 'login', 'register', 'oauth', 'token'],
@@ -173,4 +224,7 @@ function getCachedChanges(type) {
   return db.prepare('SELECT * FROM git_changes WHERE type = ? ORDER BY fetched_at DESC LIMIT 30').all(type);
 }
 
-module.exports = { fetchLatestCommits, fetchOpenPRs, fetchBranches, fetchChangedFilesForPR, fetchRepoInfo, detectImpactedModules };
+module.exports = {
+  fetchLatestCommits, fetchOpenPRs, fetchBranches, fetchChangedFilesForPR, fetchRepoInfo, detectImpactedModules,
+  searchCommitsByJiraKey, searchPRsByJiraKey,
+};

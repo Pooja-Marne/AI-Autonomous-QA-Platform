@@ -1,7 +1,14 @@
-import { useState } from 'react';
-import { Ticket, Bug, BookOpen, CheckSquare, Play, X, ChevronRight, Zap, AlertTriangle } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
+import { Ticket, Bug, BookOpen, CheckSquare, Play, X, ChevronRight, Zap, AlertTriangle, ShieldCheck } from 'lucide-react';
 import clsx from 'clsx';
 import { triggersApi } from '../services/api';
+
+const COVERAGE_CONFIG = {
+  fully_covered: { label: '✅ Fully Covered', color: 'text-green-400' },
+  partially_covered: { label: '⚠ Partially Covered', color: 'text-yellow-400' },
+  no_automation: { label: '❌ No Automation Found', color: 'text-red-400' },
+};
 
 const SUITES = [
   {
@@ -38,12 +45,21 @@ const TYPE_CONFIG = {
 };
 
 function SingleTriggerCard({ trigger, onDecision }) {
-  const [selectedSuite, setSelectedSuite] = useState('full_regression');
+  const [selectedSuite, setSelectedSuite] = useState(trigger.recommended_suite || 'full_regression');
+  const [suiteTouched, setSuiteTouched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('choose'); // 'choose' | 'confirm'
 
   const typeConfig = TYPE_CONFIG[trigger.jira_type] || TYPE_CONFIG.Task;
   const TypeIcon = typeConfig.icon;
+  const coverageConfig = COVERAGE_CONFIG[trigger.coverage_status];
+
+  // Coverage analysis runs fire-and-forget in the background — if it finishes
+  // after this card is already showing, adopt the AI-recommended suite as
+  // long as the user hasn't already picked one themselves.
+  useEffect(() => {
+    if (trigger.recommended_suite && !suiteTouched) setSelectedSuite(trigger.recommended_suite);
+  }, [trigger.recommended_suite, suiteTouched]);
 
   const handleRun = async () => {
     setLoading(true);
@@ -108,9 +124,32 @@ function SingleTriggerCard({ trigger, onDecision }) {
           </div>
         </div>
 
+        {/* Coverage Intelligence summary */}
+        {coverageConfig ? (
+          <div className="flex items-start gap-2 mb-4 bg-gray-800/50 border border-gray-700/50 rounded-xl px-3 py-2.5">
+            <ShieldCheck className={clsx('w-4 h-4 flex-shrink-0 mt-0.5', coverageConfig.color)} />
+            <div className="min-w-0">
+              <p className={clsx('text-xs font-semibold', coverageConfig.color)}>{coverageConfig.label}</p>
+              {trigger.coverage_summary && (
+                <p className="text-xs text-gray-400 mt-0.5 truncate">{trigger.coverage_summary}</p>
+              )}
+              <Link to={`/coverage?jiraKey=${trigger.jira_key}`} className="text-xs text-blue-400 hover:text-blue-300 mt-1 inline-block">
+                View Full Coverage Report →
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 mb-4 text-xs text-gray-500">
+            <ShieldCheck className="w-3.5 h-3.5 animate-pulse" /> Running coverage analysis...
+          </div>
+        )}
+
         {/* Suite Selection */}
         <div className="space-y-2 mb-4">
-          {SUITES.map((suite) => (
+          {SUITES.map((suite) => {
+            const isAiRecommended = trigger.recommended_suite === suite.value;
+            const showRecommended = isAiRecommended || (!trigger.recommended_suite && suite.recommended);
+            return (
             <label
               key={suite.value}
               className={clsx(
@@ -125,16 +164,16 @@ function SingleTriggerCard({ trigger, onDecision }) {
                 name={`suite-${trigger.id}`}
                 value={suite.value}
                 checked={selectedSuite === suite.value}
-                onChange={() => setSelectedSuite(suite.value)}
+                onChange={() => { setSelectedSuite(suite.value); setSuiteTouched(true); }}
                 className="accent-blue-500 flex-shrink-0"
               />
               <span className="text-base leading-none">{suite.icon}</span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-white">{suite.label}</span>
-                  {suite.recommended && (
+                  {showRecommended && (
                     <span className="text-xs bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded-full">
-                      Recommended
+                      {isAiRecommended ? 'AI Recommended' : 'Recommended'}
                     </span>
                   )}
                 </div>
@@ -144,7 +183,8 @@ function SingleTriggerCard({ trigger, onDecision }) {
                 <ChevronRight className="w-4 h-4 text-blue-400 flex-shrink-0" />
               )}
             </label>
-          ))}
+            );
+          })}
         </div>
 
         {/* Actions */}

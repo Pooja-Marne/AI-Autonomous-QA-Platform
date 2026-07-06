@@ -1,4 +1,6 @@
 require('dotenv').config();
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -17,6 +19,7 @@ const healingRoutes = require('./routes/healing.routes');
 const reportsRoutes = require('./routes/reports.routes');
 const schedulerRoutes = require('./routes/scheduler.routes');
 const triggersRoutes = require('./routes/triggers.routes');
+const coverageRoutes = require('./routes/coverage.routes');
 
 const app = express();
 
@@ -64,6 +67,20 @@ app.use('/api/healing', healingRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/scheduler', schedulerRoutes);
 app.use('/api/triggers', triggersRoutes);
+app.use('/api/coverage', coverageRoutes);
+
+// Production deployment serves the built React app from this same process
+// (single container/service — avoids CORS and a second public hostname).
+// In local dev the frontend runs its own Vite dev server instead, so this
+// is a no-op unless frontend/dist actually exists.
+const frontendDist = path.resolve(__dirname, '..', '..', 'frontend', 'dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get(/^(?!\/api\/|\/health).*/, (req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+  logger.info(`[Server] Serving built frontend from ${frontendDist}`);
+}
 
 app.use(notFoundHandler);
 app.use(errorHandler);
@@ -81,7 +98,7 @@ async function bootstrap() {
     app.listen(PORT, () => {
       logger.info(`[Server] AI QA Platform running on http://localhost:${PORT}`);
       logger.info(`[Server] Environment: ${config.server.nodeEnv}`);
-      logger.info('[Endpoints] /api/runs | /api/jira | /api/github | /api/healing | /api/reports | /api/scheduler | /api/triggers');
+      logger.info('[Endpoints] /api/runs | /api/jira | /api/github | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/coverage');
     });
   } catch (err) {
     logger.error('Bootstrap failed:', err);

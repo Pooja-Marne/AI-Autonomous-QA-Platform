@@ -18,6 +18,9 @@ const STATUS_CONFIG = {
   assertion_failure: { label: 'Assertion', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
   timeout: { label: 'Timeout', classes: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20' },
   unknown: { label: 'Unknown', classes: 'bg-gray-500/15 text-gray-400 border border-gray-500/20' },
+  fully_covered: { label: '✅ Fully Covered', classes: 'bg-green-500/15 text-green-400 border border-green-500/20' },
+  partially_covered: { label: '⚠ Partially Covered', classes: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20' },
+  no_automation: { label: '❌ No Automation Found', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
 };
 
 export default function StatusBadge({ status, className }) {

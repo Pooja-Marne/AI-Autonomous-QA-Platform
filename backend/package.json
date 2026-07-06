@@ -9,6 +9,7 @@
     "seed": "node src/database/seed.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
     "axios": "^1.7.9",
     "cors": "^2.8.5",
     "cron": "^3.1.7",

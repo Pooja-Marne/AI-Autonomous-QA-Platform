@@ -4,7 +4,7 @@ const axios = require('axios');
 const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 
-const RESOLVED_STATUSES = ['Done', 'Closed', 'Resolved'];
+const RESOLVED_STATUSES = config.jira.testableStatuses;
 const POLL_INTERVAL = '*/2 * * * *'; // Every 2 minutes
 
 let pollerJob = null;
@@ -109,6 +109,7 @@ async function pollForResolvedIssues() {
 
       newTriggers.push(trigger);
       console.log(`[JiraPoller] New trigger created for ${key}: ${trigger.jira_summary}`);
+      kickOffCoverageAnalysis(trigger);
     }
 
     return newTriggers;
@@ -165,11 +166,33 @@ async function createManualTrigger(issueKey) {
       fields.issuetype?.name === 'Bug' ? 'bug_fixed' : 'story_closed'
     );
 
+    kickOffCoverageAnalysis({ id, jira_key: issueKey, jira_type: fields.issuetype?.name || 'Issue' });
     return { created: true, triggerId: id };
   } catch (err) {
     console.error('[JiraPoller] createManualTrigger error:', err.message);
     throw err;
   }
+}
+
+// Fire-and-forget Coverage Intelligence Agent run for a newly-created trigger.
+// Not awaited by callers — the poller's cron cadence and the manual-trigger
+// HTTP response must not wait on a multi-second Claude call. The WHERE guard
+// prevents a late-arriving analysis from overwriting a row the user already
+// dismissed/decided while it was running.
+function kickOffCoverageAnalysis(trigger) {
+  const analysisTypes = config.jira.analysisIssueTypes.map((t) => t.toLowerCase());
+  if (!analysisTypes.includes((trigger.jira_type || '').toLowerCase())) return;
+
+  const coverageAgentService = require('./coverageAgent.service');
+  coverageAgentService.analyzeIssue(trigger.jira_key)
+    .then((report) => {
+      const db = getDatabase();
+      db.prepare(`
+        UPDATE pending_triggers SET coverage_status = ?, coverage_analysis_id = ?, recommended_suite = ?, coverage_summary = ?
+        WHERE id = ? AND dismissed = 0 AND user_decision IS NULL
+      `).run(report.coverageStatusRaw, report.id, report.recommendedSuite, (report.aiRecommendation || '').slice(0, 200), trigger.id);
+    })
+    .catch((err) => console.error(`[JiraPoller] coverage analysis failed for ${trigger.jira_key}:`, err.message));
 }
 
 function getPendingTriggers() {
