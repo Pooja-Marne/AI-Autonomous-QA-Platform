@@ -1,0 +1,12 @@
+{
+  "LoginPage.loginButton": {
+    "working": "[data-test=\"login-button\"]",
+    "broken": "[data-test=\"broken_login_button\"]",
+    "healed": null
+  },
+  "CheckoutPage.firstNameInput": {
+    "working": "[data-test=\"firstName\"]",
+    "broken": "[data-test=\"broken_firstName\"]",
+    "healed": null
+  }
+}

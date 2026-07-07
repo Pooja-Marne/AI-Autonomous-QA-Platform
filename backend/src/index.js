@@ -19,6 +19,7 @@ const reportsRoutes = require('./routes/reports.routes');
 const schedulerRoutes = require('./routes/scheduler.routes');
 const triggersRoutes = require('./routes/triggers.routes');
 const coverageRoutes = require('./routes/coverage.routes');
+const demoHealingRoutes = require('./routes/demoHealing.routes');
 
 const app = express();
 
@@ -66,6 +67,8 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/scheduler', schedulerRoutes);
 app.use('/api/triggers', triggersRoutes);
 app.use('/api/coverage', coverageRoutes);
+app.use('/api/demo-healing', demoHealingRoutes);
+app.use('/demo-artifacts', express.static(path.join(__dirname, '..', 'data', 'demo-artifacts')));
 
 // Production deployment serves the built React app from this same process
 // (single container/service — avoids CORS and a second public hostname).
@@ -96,7 +99,7 @@ async function bootstrap() {
     app.listen(PORT, () => {
       logger.info(`[Server] AI QA Platform running on http://localhost:${PORT}`);
       logger.info(`[Server] Environment: ${config.server.nodeEnv}`);
-      logger.info('[Endpoints] /api/runs | /api/jira | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/coverage');
+      logger.info('[Endpoints] /api/runs | /api/jira | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/coverage | /api/demo-healing');
     });
   } catch (err) {
     logger.error('Bootstrap failed:', err);

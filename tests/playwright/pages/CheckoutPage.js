@@ -1,8 +1,13 @@
+const { resolve } = require('../demo/locatorResolver');
+
 class CheckoutPage {
   constructor(page) {
     this.page = page;
     // Step 1 - Your Information
-    this.firstNameInput = page.locator('[data-test="firstName"]');
+    // firstNameInput is DEMO_MODE-controlled (see tests/playwright/demo/) —
+    // intentionally broken while DEMO_MODE=true to give the AI Healing Agent
+    // something real to detect and fix during live demos.
+    this.firstNameInput = page.locator(resolve('CheckoutPage.firstNameInput'));
     this.lastNameInput = page.locator('[data-test="lastName"]');
     this.postalCodeInput = page.locator('[data-test="postalCode"]');
     this.continueBtn = page.locator('[data-test="continue"]');

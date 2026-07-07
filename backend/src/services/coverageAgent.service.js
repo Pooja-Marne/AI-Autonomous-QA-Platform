@@ -255,16 +255,22 @@ async function analyzeAndSummarizeSprint() {
         ) / reports.length)
       : 100;
 
+    // The readiness score is an AVERAGE across items, so a single high-risk
+    // item can be diluted by several low-risk ones and still clear the 70
+    // threshold. The release gate must check individual items directly —
+    // otherwise the top-level YES/NO can contradict a per-issue "High risk,
+    // not release-ready" verdict shown right below it.
     const criticalCount = reports.filter((r) => r.releaseRisk === 'Critical').length;
+    const highRiskCount = reports.filter((r) => r.releaseRisk === 'High').length;
     const noAutomationCount = reports.filter((r) => r.coverageStatusRaw === 'no_automation').length;
-    const canRelease = releaseReadinessScore >= 70 && criticalCount === 0 ? 'YES' : 'NO';
+    const canRelease = releaseReadinessScore >= 70 && criticalCount === 0 && highRiskCount === 0 ? 'YES' : 'NO';
     const reason = canRelease === 'YES'
-      ? `Release readiness score is ${releaseReadinessScore}/100 with no critical-risk items.`
-      : `Release readiness score is ${releaseReadinessScore}/100${criticalCount ? `, ${criticalCount} item(s) at Critical release risk` : ''}${noAutomationCount ? `, ${noAutomationCount} item(s) with no automation` : ''}.`;
+      ? `Release readiness score is ${releaseReadinessScore}/100 with no critical or high-risk items.`
+      : `Release readiness score is ${releaseReadinessScore}/100${criticalCount ? `, ${criticalCount} item(s) at Critical release risk` : ''}${highRiskCount ? `, ${highRiskCount} item(s) at High release risk` : ''}${noAutomationCount ? `, ${noAutomationCount} item(s) with no automation` : ''}.`;
 
     const sprintLabel = sprintName ? `Sprint "${sprintName}"` : 'No active sprint';
     const aiRecommendation = reports.length
-      ? `${sprintLabel}: ${reports.length} item(s) analyzed, ${noAutomationCount} with no automation, ${highRiskModules.length} high-risk module(s) (${highRiskModules.join(', ') || 'none'}). ` +
+      ? `${sprintLabel}: ${reports.length} item(s) analyzed, ${noAutomationCount} with no automation, ${criticalCount + highRiskCount} at Critical/High release risk, ${highRiskModules.length} high-risk module(s) (${highRiskModules.join(', ') || 'none'}). ` +
         `Top recommendations: ${Array.from(new Set(reports.flatMap((r) => r.recommendations || []))).slice(0, 5).join('; ')}`
       : `${sprintLabel}: no Story/Bug items in a testable status found.`;
 

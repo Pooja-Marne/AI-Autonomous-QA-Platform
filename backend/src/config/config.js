@@ -29,6 +29,7 @@ module.exports = {
   automation: {
     repoPath: process.env.AUTOMATION_REPO_PATH || path.resolve(__dirname, '..', '..', '..', 'tests'),
   },
+  demoMode: process.env.DEMO_MODE === 'true',
   slack: {
     webhookUrl: process.env.SLACK_WEBHOOK_URL,
   },

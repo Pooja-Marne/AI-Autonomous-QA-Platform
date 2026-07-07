@@ -2,8 +2,10 @@ const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
+const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 const { healMultipleTestCases } = require('./aiHealing.service');
+const { runRealHealingCycle, findTargetForFile } = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 
@@ -182,19 +184,52 @@ async function runAndProcess(runId, suite, runName, trigger) {
       else {
         failed++;
         failedCases.push({
-          id: tcId, runId, name: tc.name, module: tc.module,
+          id: tcId, runId, name: tc.name, module: tc.module, filePath: tc.filePath,
           errorMessage: tc.errorMessage, stackTrace: tc.stackTrace,
           originalSelector: null, jiraIssueKey: null,
         });
       }
     }
 
-    // AI Healing for failures
+    // AI Healing for failures — DEMO_MODE-targeted locators get the real
+    // healing cycle (live DOM capture, real AI analysis, real retry);
+    // everything else goes through the generic healing pipeline.
     let healed = 0, notFixable = 0;
-    if (failedCases.length > 0) {
-      console.log(`[Playwright Runner] ${failedCases.length} failures — starting AI healing...`);
+    let remainingFailedCases = failedCases;
+
+    if (config.demoMode && failedCases.length > 0) {
+      const byFile = new Map();
+      for (const fc of failedCases) {
+        if (!findTargetForFile(fc.filePath)) continue;
+        if (!byFile.has(fc.filePath)) byFile.set(fc.filePath, []);
+        byFile.get(fc.filePath).push(fc);
+      }
+
+      for (const [filePath, cases] of byFile) {
+        console.log(`[Playwright Runner] Routing ${filePath} to the real Demo Healing Agent...`);
+        db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
+        const result = await runRealHealingCycle({
+          runId, filePath, failedTestNames: cases.map((c) => c.name),
+        }).catch((err) => {
+          console.error(`[Playwright Runner] Demo healing cycle failed:`, err.message);
+          return null;
+        });
+
+        const isHealed = result?.healingStatus === 'healed';
+        for (const c of cases) {
+          if (isHealed) { healed++; failed--; }
+          else notFixable++;
+          db.prepare(`UPDATE test_cases SET healing_status=?, status=? WHERE id=?`)
+            .run(isHealed ? 'healed' : 'not_fixable', isHealed ? 'healed' : 'failed', c.id);
+        }
+        remainingFailedCases = remainingFailedCases.filter((fc) => !cases.includes(fc));
+      }
+    }
+
+    if (remainingFailedCases.length > 0) {
+      console.log(`[Playwright Runner] ${remainingFailedCases.length} failures — starting AI healing...`);
       db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
-      const healingResults = await healMultipleTestCases(failedCases);
+      const healingResults = await healMultipleTestCases(remainingFailedCases);
       for (const r of healingResults) {
         if (r.healingStatus === 'healed') { healed++; failed--; }
         else notFixable++;

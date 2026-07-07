@@ -86,6 +86,32 @@ function initializeSchema(db) {
       FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
     );
 
+    -- Live "real" AI healing cycles triggered by the two DEMO_MODE-controlled
+    -- broken locators (see tests/playwright/demo/). Separate from
+    -- healing_actions because this captures a richer, presentation-oriented
+    -- record: real screenshot/trace/DOM artifacts, live-verified locator,
+    -- and a step-by-step log trail for the demo audience to follow.
+    CREATE TABLE IF NOT EXISTS demo_healing_runs (
+      id TEXT PRIMARY KEY,
+      run_id TEXT,
+      locator_key TEXT NOT NULL,
+      test_file TEXT,
+      failed_tests TEXT,
+      old_locator TEXT,
+      new_locator TEXT,
+      root_cause TEXT,
+      confidence_score REAL,
+      live_verified INTEGER DEFAULT 0,
+      healing_status TEXT,
+      retry_status TEXT,
+      screenshot_path TEXT,
+      trace_path TEXT,
+      dom_snapshot_path TEXT,
+      time_taken_ms INTEGER,
+      logs TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Jira Issues Cache
     CREATE TABLE IF NOT EXISTS jira_issues (
       id TEXT PRIMARY KEY,
