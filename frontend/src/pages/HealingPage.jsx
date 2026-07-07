@@ -157,18 +157,15 @@ export default function HealingPage() {
   const [error, setError] = useState(null);
   const [jiraOnly, setJiraOnly] = useState(false);
   const [demoRuns, setDemoRuns] = useState([]);
-  const [demoMode, setDemoMode] = useState(false);
 
   const load = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [actionsRes, demoStatusRes, demoRunsRes] = await Promise.allSettled([
+      const [actionsRes, demoRunsRes] = await Promise.allSettled([
         healingApi.getActions({ limit: 100 }),
-        demoHealingApi.getStatus(),
         demoHealingApi.getRuns({ limit: 20 }),
       ]);
       if (actionsRes.status === 'fulfilled') setActions(actionsRes.value?.data || []);
-      if (demoStatusRes.status === 'fulfilled') setDemoMode(!!demoStatusRes.value?.data?.demoMode);
       if (demoRunsRes.status === 'fulfilled') setDemoRuns(demoRunsRes.value?.data || []);
     } finally {
       setLoading(false);
@@ -216,32 +213,21 @@ export default function HealingPage() {
           </h1>
           <p className="text-sm text-gray-400 mt-0.5">Analyze failures and trigger self-healing</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${demoMode ? 'text-purple-300 bg-purple-500/15 border-purple-500/20' : 'text-gray-500 bg-gray-800 border-gray-700'}`}>
-            <Sparkles className="w-3 h-3" /> DEMO_MODE {demoMode ? 'ON' : 'OFF'}
-          </span>
-          <button onClick={() => load(true)} className="btn-secondary">
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+        <button onClick={() => load(true)} className="btn-secondary">
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
 
-      {/* Live Locator Healing (Demo Mode) */}
-      {(demoMode || demoRuns.length > 0) && (
+      {/* Live Locator Healing */}
+      {demoRuns.length > 0 && (
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-white flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-purple-400" /> Live Locator Healing
             <span className="text-xs text-gray-500 font-normal">— real detection, real AI analysis, real retry against the live app</span>
           </h2>
-          {demoRuns.length === 0 ? (
-            <div className="glass-card p-6 text-center text-gray-500 text-sm">
-              DEMO_MODE is on — trigger a Playwright run (Login or Checkout suite) to see a real healing cycle appear here.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {demoRuns.map((run) => <DemoHealingRunCard key={run.id} run={run} />)}
-            </div>
-          )}
+          <div className="space-y-2">
+            {demoRuns.map((run) => <DemoHealingRunCard key={run.id} run={run} />)}
+          </div>
         </div>
       )}
 
