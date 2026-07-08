@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { healTestCase, getHealingStats, classifyFailure } = require('../services/aiHealing.service');
+const { runRealHealingCycle, findBrokenLocatorInMessage } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 const config = require('../config/config');
 
@@ -10,8 +11,52 @@ router.post('/analyze', async (req, res) => {
   try {
     const { name, errorMessage, stackTrace, filePath } = req.body;
     if (!errorMessage) return res.status(400).json({ success: false, error: 'errorMessage is required' });
+
+    // If the error message contains a locator we can actually recognize and
+    // fix, run the real pipeline (live DOM, real AI, real retry) instead of
+    // just producing a text diagnosis — "Fix with AI" should try to really
+    // fix it whenever that's possible.
+    const match = findBrokenLocatorInMessage(errorMessage);
+    if (match) {
+      const result = await runRealHealingCycle({
+        locatorKey: match.locatorKey, testFile: filePath, failedTestNames: name ? [name] : [],
+      });
+      if (result) {
+        return res.json({
+          success: true,
+          data: {
+            real: true,
+            failureType: 'locator_issue',
+            healingStatus: result.healingStatus,
+            fixed: result.healingStatus === 'healed',
+            confidence: (result.confidenceScore || 0) / 100,
+            reasoning: result.rootCause,
+            oldLocator: result.oldLocator,
+            newLocator: result.newLocator,
+            codeSnippet: result.codeSnippet,
+            liveVerified: result.liveVerified,
+            retryStatus: result.retryStatus,
+            suggestedFix: result.newLocator
+              ? `Replace ${result.oldLocator} with ${result.newLocator}`
+              : 'AI could not confidently verify a replacement locator against the live app.',
+            canAutoHeal: result.healingStatus === 'healed',
+          },
+        });
+      }
+    }
+
+    // No recognized locator to really fix — fall back to a text-only
+    // diagnosis, but be explicit that this is a diagnosis, not a fix.
     const analysis = await classifyFailure({ name: name || 'unknown', errorMessage, stackTrace, filePathTest: filePath });
-    res.json({ success: true, data: analysis });
+    res.json({
+      success: true,
+      data: {
+        real: false,
+        ...analysis,
+        fixed: false,
+        note: 'This error doesn\'t match a locator the live self-healing agent recognizes, so this is a diagnosis only — no live retry was performed.',
+      },
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

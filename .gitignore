@@ -23,6 +23,8 @@ backend/data/demo-artifacts/
 tests/playwright-results.json
 tests/test-results/
 tests/playwright-report/
+test-results/
+playwright-report/
 
 # Logs
 *.log

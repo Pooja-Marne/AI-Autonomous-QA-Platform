@@ -8,7 +8,7 @@ class CheckoutPage {
     // intentionally broken while DEMO_MODE=true to give the AI Healing Agent
     // something real to detect and fix during live demos.
     this.firstNameInput = page.locator(resolve('CheckoutPage.firstNameInput'));
-    this.lastNameInput = page.locator('[data-test="broken_lastName"]');
+    this.lastNameInput = page.locator('[data-test="lastName"]');
     this.postalCodeInput = page.locator('[data-test="postalCode"]');
     this.continueBtn = page.locator('[data-test="continue"]');
     this.cancelBtn = page.locator('[data-test="cancel"]');

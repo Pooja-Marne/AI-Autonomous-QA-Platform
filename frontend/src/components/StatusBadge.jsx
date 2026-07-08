@@ -3,7 +3,7 @@ import clsx from 'clsx';
 const STATUS_CONFIG = {
   passed: { label: 'Passed', classes: 'bg-green-500/15 text-green-400 border border-green-500/20' },
   failed: { label: 'Failed', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
-  healed: { label: 'Healed', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
+  healed: { label: 'Fixed', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
   skipped: { label: 'Skipped', classes: 'bg-gray-500/15 text-gray-400 border border-gray-500/20' },
   running: { label: 'Running', classes: 'bg-blue-500/15 text-blue-400 border border-blue-500/20 animate-pulse' },
   healing: { label: 'Healing', classes: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20 animate-pulse' },

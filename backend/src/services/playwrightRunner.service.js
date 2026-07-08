@@ -2,10 +2,9 @@ const { spawn } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
-const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 const { healMultipleTestCases } = require('./aiHealing.service');
-const { runRealHealingCycle, findTargetForFile } = require('./demoHealingAgent.service');
+const { runRealHealingCycle, findBrokenLocatorInMessage } = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 
@@ -191,27 +190,29 @@ async function runAndProcess(runId, suite, runName, trigger) {
       }
     }
 
-    // AI Healing for failures — DEMO_MODE-targeted locators get the real
-    // healing cycle (live DOM capture, real AI analysis, real retry);
-    // everything else goes through the generic healing pipeline.
+    // AI Healing for failures — failures whose error message matches a known
+    // broken locator get the real healing cycle (live DOM capture, real AI
+    // analysis, real retry against the actual app); everything else goes
+    // through the generic (simulated) healing pipeline.
     let healed = 0, notFixable = 0;
     let remainingFailedCases = failedCases;
 
-    if (config.demoMode && failedCases.length > 0) {
-      const byFile = new Map();
+    if (failedCases.length > 0) {
+      const byLocator = new Map();
       for (const fc of failedCases) {
-        if (!findTargetForFile(fc.filePath)) continue;
-        if (!byFile.has(fc.filePath)) byFile.set(fc.filePath, []);
-        byFile.get(fc.filePath).push(fc);
+        const match = findBrokenLocatorInMessage(fc.errorMessage);
+        if (!match) continue;
+        if (!byLocator.has(match.locatorKey)) byLocator.set(match.locatorKey, []);
+        byLocator.get(match.locatorKey).push(fc);
       }
 
-      for (const [filePath, cases] of byFile) {
-        console.log(`[Playwright Runner] Routing ${filePath} to the real Demo Healing Agent...`);
+      for (const [locatorKey, cases] of byLocator) {
+        console.log(`[Playwright Runner] Routing locator "${locatorKey}" to the real self-healing agent...`);
         db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
         const result = await runRealHealingCycle({
-          runId, filePath, failedTestNames: cases.map((c) => c.name),
+          locatorKey, runId, testFile: cases[0].filePath, failedTestNames: cases.map((c) => c.name),
         }).catch((err) => {
-          console.error(`[Playwright Runner] Demo healing cycle failed:`, err.message);
+          console.error(`[Playwright Runner] Self-healing cycle failed:`, err.message);
           return null;
         });
 

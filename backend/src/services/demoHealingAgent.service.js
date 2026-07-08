@@ -13,12 +13,14 @@ const BASE_URL = 'https://www.saucedemo.com'; // must match tests/playwright.con
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
 
-// Real (not simulated) reproduction steps for each DEMO_MODE-controlled
-// locator — enough real interaction with the live app to reach the DOM
-// state where the broken element should exist.
+// Real (not simulated) reproduction steps + metadata for every locator that
+// can be intentionally broken via tests/playwright/demo/demoLocators.json.
+// Detection is keyed off the actual broken selector STRING (see
+// findBrokenLocatorInMessage below), not which spec file failed — a shared
+// page object like LoginPage is exercised by many suites, not just its own.
 const LOCATOR_TARGETS = {
   'LoginPage.loginButton': {
-    matchesFile: (f) => (f || '').includes('login.spec.js'),
+    propertyName: 'loginButton',
     specArg: 'specs/auth/',
     elementDescription: 'the Login submit button on the SauceDemo login page',
     reproduce: async (page) => {
@@ -26,7 +28,7 @@ const LOCATOR_TARGETS = {
     },
   },
   'CheckoutPage.firstNameInput': {
-    matchesFile: (f) => (f || '').includes('checkout.spec.js'),
+    propertyName: 'firstNameInput',
     specArg: 'specs/checkout/',
     elementDescription: 'the First Name input field on the SauceDemo checkout step-one form',
     reproduce: async (page) => {
@@ -41,16 +43,27 @@ const LOCATOR_TARGETS = {
   },
 };
 
-function findTargetForFile(filePath) {
-  return Object.entries(LOCATOR_TARGETS).find(([, t]) => t.matchesFile(filePath));
-}
-
 function loadLocatorConfig() {
   return JSON.parse(fs.readFileSync(LOCATORS_PATH, 'utf-8'));
 }
 
 function saveLocatorConfig(cfg) {
   fs.writeFileSync(LOCATORS_PATH, JSON.stringify(cfg, null, 2));
+}
+
+// Finds a registered broken locator by checking whether its exact selector
+// string appears in the failure text — this is how Playwright errors work
+// ("waiting for locator('[data-test=\"broken_login_button\"]')"), so it's a
+// reliable, generic signal regardless of which spec/test surfaced it.
+function findBrokenLocatorInMessage(message) {
+  if (!message) return null;
+  const demoConfig = loadLocatorConfig();
+  for (const [locatorKey, entry] of Object.entries(demoConfig)) {
+    if (entry.broken && message.includes(entry.broken)) {
+      return { locatorKey, oldLocator: entry.broken };
+    }
+  }
+  return null;
 }
 
 function stripForPrompt(html) {
@@ -130,32 +143,38 @@ function persistDemoHealingRun(r) {
       root_cause, confidence_score, live_verified, healing_status, retry_status,
       screenshot_path, trace_path, dom_snapshot_path, time_taken_ms, logs
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
+  `).run(...[
     r.id, r.runId, r.locatorKey, r.testFile, JSON.stringify(r.failedTests || []),
     r.oldLocator, r.newLocator, r.rootCause, r.confidenceScore, r.liveVerified ? 1 : 0,
     r.healingStatus, r.retryStatus, r.screenshotPath, r.tracePath, r.domSnapshotPath,
-    r.timeTakenMs, JSON.stringify(r.logs || [])
-  );
+    r.timeTakenMs, JSON.stringify(r.logs || []),
+  ].map((v) => (v === undefined ? null : v))); // node:sqlite rejects `undefined` bind values outright
 }
 
-// Runs the full real healing cycle for one DEMO_MODE-broken locator: capture
+function buildCodeSnippet(locatorKey, propertyName, locator) {
+  if (!locator) return null;
+  const [pageObject] = locatorKey.split('.');
+  return `// ${pageObject}.js\nthis.${propertyName} = page.locator('${locator}');`;
+}
+
+// Runs the full real healing cycle for a recognized broken locator: capture
 // real artifacts from the live app, ask the AI to analyze the real DOM,
-// verify its suggestion against the live page, apply it for one retry of the
-// real spec file, then always revert so the next full run reproduces the
-// same failure again (per requirement: never permanently fix the demo bait).
-async function runRealHealingCycle({ runId, filePath, failedTestNames = [] }) {
-  const target = findTargetForFile(filePath);
-  if (!target || !config.demoMode) return null;
-  const [locatorKey, meta] = target;
+// verify its suggestion against the live page, apply it, and retry the real
+// spec file. On success the fix STAYS applied (demoLocators.json's `healed`
+// field is not reverted) — call resetDemoLocators() to re-arm the bait
+// locators for another demo run.
+async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, failedTestNames = [] }) {
+  const meta = LOCATOR_TARGETS[locatorKey];
+  if (!meta) return null;
 
   const startedAt = Date.now();
   const logs = [];
   const log = (message) => {
     logs.push({ ts: Date.now(), message });
-    console.log(`[Demo Healing] ${message}`);
+    console.log(`[Self-Healing] ${message}`);
   };
 
-  log(`Detected failure in ${filePath} — investigating locator "${locatorKey}"`);
+  log(`Detected broken locator "${locatorKey}"${testFile ? ` (surfaced via ${testFile})` : ''}`);
 
   const demoConfig = loadLocatorConfig();
   const oldLocator = demoConfig[locatorKey].broken;
@@ -169,7 +188,7 @@ async function runRealHealingCycle({ runId, filePath, failedTestNames = [] }) {
 
   // Stored/returned paths are relative to ARTIFACTS_DIR (served statically at
   // /demo-artifacts by index.js) so the frontend can link/embed them directly.
-  const artifactSubdir = `${runId}-${locatorKey.replace(/\W+/g, '_')}`;
+  const artifactSubdir = `${runId || uuidv4()}-${locatorKey.replace(/\W+/g, '_')}`;
   const artifactDir = path.join(ARTIFACTS_DIR, artifactSubdir);
   fs.mkdirSync(artifactDir, { recursive: true });
   const screenshotPath = `${artifactSubdir}/screenshot.png`;
@@ -181,7 +200,7 @@ async function runRealHealingCycle({ runId, filePath, failedTestNames = [] }) {
 
   let record;
   try {
-    await target[1].reproduce(page);
+    await meta.reproduce(page);
     log('Reproduced the failure state live against the real application');
 
     await page.screenshot({ path: screenshotAbsPath, fullPage: true });
@@ -219,28 +238,41 @@ async function runRealHealingCycle({ runId, filePath, failedTestNames = [] }) {
       retryStatus = retry.passed ? 'passed' : 'failed';
       healingStatus = retry.passed ? 'healed' : 'not_fixable';
       log(`Retry result: ${retryStatus.toUpperCase()} (${retry.passedCount}/${retry.totalCount} tests passing)`);
+
+      if (!retry.passed) {
+        // The fix didn't actually make the test pass — don't leave a
+        // non-working override in place.
+        demoConfig[locatorKey].healed = null;
+        saveLocatorConfig(demoConfig);
+      }
     } else {
-      log('Skipping retry — AI suggestion could not be verified against the live DOM. Flagging for manual review.');
+      log('Could not verify a working replacement live. Flagging for manual review with the best AI suggestion attached.');
     }
 
     const timeTakenMs = Date.now() - startedAt;
     record = {
-      id: uuidv4(), runId, locatorKey, testFile: filePath, failedTests: failedTestNames,
+      id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
       oldLocator, newLocator: analysis.suggestedLocator, rootCause: analysis.rootCause,
       confidenceScore: analysis.confidence, liveVerified, healingStatus, retryStatus,
       screenshotPath, tracePath, domSnapshotPath, timeTakenMs, logs,
+      codeSnippet: healingStatus === 'healed' ? buildCodeSnippet(locatorKey, meta.propertyName, analysis.suggestedLocator) : null,
     };
     persistDemoHealingRun(record);
     log(`Healing cycle complete in ${timeTakenMs}ms — status: ${healingStatus.toUpperCase()}`);
   } finally {
-    // Always revert — the broken locator must stay broken for the next demo run.
-    const cfg = loadLocatorConfig();
-    cfg[locatorKey].healed = null;
-    saveLocatorConfig(cfg);
     await browser.close();
   }
 
   return record;
+}
+
+// Clears every locator's `healed` override back to null, re-arming the bait
+// locators (still `broken` while DEMO_MODE=true) for another live demo.
+function resetDemoLocators() {
+  const cfg = loadLocatorConfig();
+  for (const key of Object.keys(cfg)) cfg[key].healed = null;
+  saveLocatorConfig(cfg);
+  return cfg;
 }
 
 function getDemoHealingRuns({ limit = 50 } = {}) {
@@ -250,7 +282,10 @@ function getDemoHealingRuns({ limit = 50 } = {}) {
     failedTests: JSON.parse(r.failed_tests || '[]'),
     logs: JSON.parse(r.logs || '[]'),
     liveVerified: Boolean(r.live_verified),
+    code_snippet: r.healing_status === 'healed'
+      ? buildCodeSnippet(r.locator_key, LOCATOR_TARGETS[r.locator_key]?.propertyName, r.new_locator)
+      : null,
   }));
 }
 
-module.exports = { runRealHealingCycle, findTargetForFile, getDemoHealingRuns };
+module.exports = { runRealHealingCycle, findBrokenLocatorInMessage, resetDemoLocators, getDemoHealingRuns };

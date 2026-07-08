@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { CheckCircle2, XCircle, AlertTriangle, Clock, Camera, FileCode, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertTriangle, Clock, Camera, FileCode, ChevronDown, ChevronUp, ShieldCheck, ShieldAlert, Code2 } from 'lucide-react';
 import clsx from 'clsx';
 
 const STATUS_CONFIG = {
-  healed: { label: '✓ Healed', classes: 'text-green-400 bg-green-500/10 border-green-500/20' },
+  healed: { label: '✓ Fixed', classes: 'text-green-400 bg-green-500/10 border-green-500/20' },
   not_fixable: { label: '✗ Manual Investigation Required', classes: 'text-red-400 bg-red-500/10 border-red-500/20' },
 };
 
@@ -63,6 +63,13 @@ export default function DemoHealingRunCard({ run }) {
             <p className="text-xs font-medium text-purple-400 mb-1">Root Cause Analysis</p>
             <p className="text-xs text-purple-200">{run.root_cause}</p>
           </div>
+
+          {run.code_snippet && (
+            <div className="bg-black/50 rounded-lg p-2.5">
+              <p className="text-xs font-medium text-gray-400 mb-1 flex items-center gap-1"><Code2 className="w-3.5 h-3.5" /> Applied Fix</p>
+              <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap">{run.code_snippet}</pre>
+            </div>
+          )}
 
           <div className="flex gap-2 flex-wrap">
             {run.screenshot_path && (

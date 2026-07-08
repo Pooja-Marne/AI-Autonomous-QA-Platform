@@ -76,6 +76,7 @@ export const coverageApi = {
 export const demoHealingApi = {
   getStatus: () => api.get('/demo-healing/status'),
   getRuns: (params) => api.get('/demo-healing/runs', { params }),
+  reset: () => api.post('/demo-healing/reset'),
 };
 
 export default api;
