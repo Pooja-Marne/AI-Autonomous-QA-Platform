@@ -45,6 +45,15 @@ const LOCATOR_TARGETS = {
   },
 };
 
+// In-progress healing cycles, keyed by runId — lets the UI poll live
+// progress (which locator, what step, running log) instead of only seeing a
+// result once persistDemoHealingRun() writes the final row at the very end.
+const activeCycles = new Map();
+
+function getActiveCycle(runId) {
+  return runId ? activeCycles.get(runId) || null : null;
+}
+
 function loadLocatorConfig() {
   return JSON.parse(fs.readFileSync(LOCATORS_PATH, 'utf-8'));
 }
@@ -275,15 +284,19 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
 
   const startedAt = Date.now();
   const logs = [];
-  const log = (message) => {
+  if (runId) activeCycles.set(runId, { locatorKey, logs, step: 'starting', startedAt });
+  const log = (message, step) => {
     logs.push({ ts: Date.now(), message });
     console.log(`[Self-Healing] ${message}`);
+    const cycle = runId && activeCycles.get(runId);
+    if (cycle && step) cycle.step = step;
   };
 
   log(`Detected broken locator "${locatorKey}"${testFile ? ` (surfaced via ${testFile})` : ''}`);
 
   const demoConfig = loadLocatorConfig();
   const oldLocator = demoConfig[locatorKey].broken;
+  if (runId) activeCycles.get(runId).oldLocator = oldLocator;
 
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
@@ -311,7 +324,7 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
   let record;
   try {
     await meta.reproduce(page);
-    log('Reproduced the failure state live against the real application');
+    log('Reproduced the failure state live against the real application', 'reproducing');
 
     await page.screenshot({ path: screenshotAbsPath, fullPage: true });
     log(`Captured screenshot -> ${screenshotPath}`);
@@ -323,15 +336,20 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
     await context.tracing.stop({ path: traceAbsPath });
     log(`Saved Playwright trace -> ${tracePath}`);
 
+    log('Analyzing failure and searching for a replacement locator...', 'analyzing');
     const analysis = await analyzeLocatorFailure({
       page, elementDescription: meta.elementDescription, oldLocator, domSnapshot: domContent, log,
     });
     log(`Root cause (via ${analysis.resolvedBy}): ${analysis.rootCause}`);
     log(`Suggested locator: ${analysis.suggestedLocator} (confidence ${analysis.confidence}%)`);
+    if (runId) {
+      const cycle = activeCycles.get(runId);
+      if (cycle) Object.assign(cycle, { newLocator: analysis.suggestedLocator, confidence: analysis.confidence, rootCause: analysis.rootCause });
+    }
 
     let liveVerified = false;
     if (analysis.suggestedLocator) {
-      log('Validating AI-suggested locator against the live DOM...');
+      log('Validating AI-suggested locator against the live DOM...', 'verifying');
       const matchCount = await page.locator(analysis.suggestedLocator).count().catch(() => 0);
       liveVerified = matchCount === 1;
       log(liveVerified ? 'Live validation passed — selector resolves to exactly 1 element' : `Live validation failed — selector matched ${matchCount} element(s)`);
@@ -343,7 +361,7 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
     if (liveVerified) {
       demoConfig[locatorKey].healed = analysis.suggestedLocator;
       saveLocatorConfig(demoConfig);
-      log('Applied AI-generated locator and retrying the real spec file...');
+      log('Applied AI-generated locator and retrying the real spec file...', 'retrying');
 
       const retry = await retrySpecFile(meta.specArg);
       retryStatus = retry.passed ? 'passed' : 'failed';
@@ -370,9 +388,10 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
       codeSnippet: healingStatus === 'healed' ? buildCodeSnippet(locatorKey, meta.propertyName, analysis.suggestedLocator) : null,
     };
     persistDemoHealingRun(record);
-    log(`Healing cycle complete in ${timeTakenMs}ms — status: ${healingStatus.toUpperCase()}`);
+    log(`Healing cycle complete in ${timeTakenMs}ms — status: ${healingStatus.toUpperCase()}`, 'done');
   } finally {
     await browser.close();
+    if (runId) activeCycles.delete(runId);
   }
 
   return record;
@@ -413,4 +432,4 @@ function getDemoHealingRuns({ limit = 50 } = {}) {
   }));
 }
 
-module.exports = { runRealHealingCycle, findBrokenLocatorInMessage, resetDemoLocators, getDemoHealingRuns, getLocatorsStatus };
+module.exports = { runRealHealingCycle, findBrokenLocatorInMessage, resetDemoLocators, getDemoHealingRuns, getLocatorsStatus, getActiveCycle };

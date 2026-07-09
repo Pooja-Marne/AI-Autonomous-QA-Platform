@@ -158,5 +158,5 @@ export function useDemoRunner() {
     setState((s) => ({ ...s, phase: 'report', timelineCount: TIMELINE.length, showConfetti: true }));
   }, []);
 
-  return { state, start, reset, reportStats: REPORT_STATS, timeline: TIMELINE };
+  return { state, start, reset, reportStats: REPORT_STATS, timeline: TIMELINE, failures: FAILURES };
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import JiraTriggerPrompt from './components/JiraTriggerPrompt';
+import LiveHealingModal from './components/healing/LiveHealingModal';
 import Dashboard from './pages/Dashboard';
 import TestRuns from './pages/TestRuns';
 import RunDetails from './pages/RunDetails';
@@ -13,7 +14,7 @@ import { triggersApi } from './services/api';
 
 function AppShell() {
   const [pendingTriggers, setPendingTriggers] = useState([]);
-  const navigate = useNavigate();
+  const [liveRunId, setLiveRunId] = useState(null);
 
   const fetchPending = useCallback(async () => {
     try {
@@ -36,10 +37,11 @@ function AppShell() {
     setPendingTriggers((prev) => prev.filter((t) => t.id !== triggerId));
 
     if (result.action === 'run_started' && result.runId) {
-      // Navigate to the run details page
-      setTimeout(() => navigate(`/runs/${result.runId}`), 300);
+      // Show the live healing modal in place instead of navigating away —
+      // uses the same run view/components as the AI Healing page and demo.
+      setLiveRunId(result.runId);
     }
-  }, [navigate]);
+  }, []);
 
   return (
     <div className="flex min-h-screen bg-gray-950">
@@ -63,6 +65,10 @@ function AppShell() {
         triggers={pendingTriggers}
         onDecision={handleDecision}
       />
+
+      {liveRunId && (
+        <LiveHealingModal runId={liveRunId} onClose={() => setLiveRunId(null)} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { startPlaywrightRun, getRunById, getAllRuns, getTestStats } = require('../services/playwrightRunner.service');
+const { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun } = require('../services/playwrightRunner.service');
+const { getActiveCycle } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 
 router.post('/', async (req, res) => {
@@ -37,6 +38,21 @@ router.get('/:id', async (req, res) => {
     const run = await getRunById(req.params.id);
     if (!run) return res.status(404).json({ success: false, error: 'Run not found' });
     res.json({ success: true, data: run });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Fast-poll endpoint for while a run is in progress: merges the in-memory
+// regression execution snapshot (incremental Playwright `list` reporter
+// output) with the in-memory healing-cycle snapshot (if a locator fix is
+// currently being attempted). Both are null once the run leaves memory —
+// at that point the DB-backed GET /:id (test_runs/test_cases) is authoritative.
+router.get('/:id/live', async (req, res) => {
+  try {
+    const run = getActiveRun(req.params.id);
+    const healing = getActiveCycle(req.params.id);
+    res.json({ success: true, data: { run, healing } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

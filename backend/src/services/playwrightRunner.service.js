@@ -34,10 +34,63 @@ const SUITE_PATTERNS = {
   e2e: ['specs/e2e/'],
 };
 
-async function runPlaywrightTests(suite = 'smoke') {
+const SUITE_MODULES = {
+  full_regression: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
+  smoke: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
+  regression: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
+  login: ['auth'],
+  cart: ['cart'],
+  checkout: ['checkout'],
+  inventory: ['inventory'],
+  e2e: ['e2e'],
+};
+
+// In-progress runs, keyed by runId — this is what makes the UI genuinely
+// real-time: the JSON reporter only ever produces output once, at the very
+// end, so without this there is nothing to show while a run is executing.
+// The `list` reporter prints one line per test as it finishes, so we tee
+// stdout to this map as chunks arrive and let /api/runs/:id/live poll it.
+// Entries are removed once the run leaves this file's control (terminal
+// status persisted, or handed off to the healing agent).
+const activeRuns = new Map();
+const MAX_LIVE_LOG_LINES = 300;
+
+function getActiveRun(runId) {
+  return activeRuns.get(runId) || null;
+}
+
+function stripAnsi(str) {
+  return str.replace(/\x1B\[[0-9;]*m/g, '');
+}
+
+function ingestListLine(runId, rawLine) {
+  const entry = activeRuns.get(runId);
+  if (!entry) return;
+  const line = stripAnsi(rawLine).trim();
+  if (!line) return;
+
+  entry.logs.push(line);
+  if (entry.logs.length > MAX_LIVE_LOG_LINES) entry.logs.shift();
+
+  // Best-effort per-module status from the list reporter's line shape:
+  // "  ✓  1 [chromium] › auth/login.spec.js:10:3 › ..." (✘ for failures).
+  const fileMatch = line.match(/›\s*([\w./-]+\.spec\.js):\d+:\d+\s*›/);
+  if (fileMatch) {
+    const module = deriveModule(fileMatch[1], '');
+    const mod = entry.modules[module];
+    if (mod) {
+      if (/^[✘x✗]/i.test(line) || line.includes(' failed')) mod.status = 'failed';
+      else if (mod.status === 'pending') mod.status = 'running';
+      mod.seen += 1;
+    }
+  }
+}
+
+async function runPlaywrightTests(suite, runId) {
   return new Promise((resolve, reject) => {
     const extraArgs = SUITE_PATTERNS[suite] ?? SUITE_PATTERNS.smoke;
-    const args = ['playwright', 'test', '--reporter=json', `--project=${PROJECT}`, ...extraArgs];
+    const jsonOutputPath = path.join(TESTS_DIR, `.run-result-${runId}.json`);
+    const args = ['playwright', 'test', '--reporter=list,json', `--project=${PROJECT}`, ...extraArgs];
 
     console.log(`[Playwright] Running: npx ${args.join(' ')} (cwd=${TESTS_DIR})`);
 
@@ -45,36 +98,40 @@ async function runPlaywrightTests(suite = 'smoke') {
       cwd: TESTS_DIR,
       shell: true,
       timeout: 300000, // 5 min max
+      env: { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: jsonOutputPath },
     });
 
-    let stdout = '';
     let stderr = '';
+    let buffer = '';
 
-    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stdout.on('data', (d) => {
+      buffer += d.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // keep the last, possibly-incomplete line for next chunk
+      for (const line of lines) ingestListLine(runId, line);
+    });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
     proc.on('close', (code) => {
+      if (buffer.trim()) ingestListLine(runId, buffer);
       console.log(`[Playwright] Exit code: ${code}`);
       // Playwright exits with 1 when tests fail — that's normal, not an error.
       // Only log stderr when something actually looks wrong, to keep logs clean.
       if (code !== 0 && code !== 1) console.error(`[Playwright] stderr:\n${stderr.slice(0, 3000)}`);
-      resolve({ stdout, stderr, exitCode: code });
+
+      let json = null;
+      try {
+        json = JSON.parse(fs.readFileSync(jsonOutputPath, 'utf-8'));
+      } catch (err) {
+        console.error(`[Playwright] Could not read JSON result file: ${err.message}`);
+      } finally {
+        fs.unlink(jsonOutputPath, () => {});
+      }
+      resolve({ json, stderr, exitCode: code });
     });
 
     proc.on('error', (err) => reject(err));
   });
-}
-
-function parsePlaywrightResults(rawOutput) {
-  try {
-    const jsonStart = rawOutput.indexOf('{');
-    if (jsonStart !== -1) {
-      return JSON.parse(rawOutput.substring(jsonStart));
-    }
-  } catch {
-    /* fall through */
-  }
-  return null;
 }
 
 function mapPlaywrightResults(pwResults) {
@@ -162,9 +219,15 @@ async function runAndProcess(runId, suite, runName, trigger) {
   let passed = 0, failed = 0, skipped = 0;
   const failedCases = [];
 
+  const modules = SUITE_MODULES[suite] ?? SUITE_MODULES.smoke;
+  activeRuns.set(runId, {
+    suite,
+    logs: [],
+    modules: Object.fromEntries(modules.map((m) => [m, { status: 'pending', seen: 0 }])),
+  });
+
   try {
-    const { stdout, stderr, exitCode } = await runPlaywrightTests(suite);
-    const pwResults = parsePlaywrightResults(stdout);
+    const { json: pwResults, stderr, exitCode } = await runPlaywrightTests(suite, runId);
 
     if (!pwResults) {
       console.error(`[Playwright Runner] Could not parse results (exit ${exitCode}) — marking run as failed. stderr:\n${stderr.slice(0, 2000)}`);
@@ -277,6 +340,8 @@ async function runAndProcess(runId, suite, runName, trigger) {
   } catch (err) {
     console.error('[Playwright Runner] Error:', err.message);
     db.prepare(`UPDATE test_runs SET status='failed' WHERE id=?`).run(runId);
+  } finally {
+    activeRuns.delete(runId);
   }
 }
 
@@ -341,4 +406,4 @@ async function getTestStats() {
   return { overall, recentRuns, failuresByModule };
 }
 
-module.exports = { startPlaywrightRun, getRunById, getAllRuns, getTestStats };
+module.exports = { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun };

@@ -1,0 +1,210 @@
+import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import confetti from 'canvas-confetti';
+import {
+  Play, RotateCcw, CheckCircle2, XCircle, Loader2,
+  Zap, FileCheck, ClipboardList,
+} from 'lucide-react';
+import clsx from 'clsx';
+import SuiteProgress from '../demo/SuiteProgress';
+import LogConsole from '../demo/LogConsole';
+import HealingCard from '../demo/HealingCard';
+import AITimeline from '../demo/AITimeline';
+import AIChatBubble from '../demo/AIChatBubble';
+import ExecutiveReport from '../demo/ExecutiveReport';
+
+const PHASE_LABEL = {
+  idle: null,
+  connecting: 'Connecting',
+  running: 'Running Regression',
+  failures: 'Failures Detected',
+  healing: 'AI Healing',
+  report: 'Executive Report',
+};
+
+function PhaseBadge({ phase }) {
+  const label = PHASE_LABEL[phase];
+  if (!label) return null;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-purple-500/15 text-purple-300 border border-purple-500/20">
+      <Loader2 className={clsx('w-3 h-3', phase !== 'report' && 'animate-spin')} />
+      {label}
+    </span>
+  );
+}
+
+function ConnectingPanel({ steps }) {
+  return (
+    <div className="glass-card p-6 max-w-md mx-auto space-y-3">
+      {steps.map((s, i) => (
+        <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="flex items-center gap-2 text-sm">
+          {s.done ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />}
+          <span className={s.done ? 'text-green-400 font-medium' : 'text-gray-300'}>{s.text}</span>
+        </motion.div>
+      ))}
+    </div>
+  );
+}
+
+function FailureCard({ failure, index }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ delay: index * 0.05 }}
+      className="glass-card p-4 border border-red-500/20 flex items-start gap-3"
+    >
+      <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+      <div>
+        <p className="text-sm font-semibold text-white">{failure.title}</p>
+        <p className="text-xs text-gray-500">{failure.suite}</p>
+        <p className="text-xs text-red-400 mt-1">Reason: {failure.reason}</p>
+      </div>
+    </motion.div>
+  );
+}
+
+function buildCompletedHealing(failure, healingSteps) {
+  const steps = healingSteps[failure.key] || [];
+  return {
+    key: failure.key,
+    title: failure.title,
+    healable: failure.healable,
+    stepIndex: steps.length,
+    steps,
+    result: null,
+    retryLogs: [],
+  };
+}
+
+/**
+ * Shared presentational run view: renders the full connect -> regression ->
+ * failures -> healing -> executive report flow. Fed by either useDemoRunner
+ * (scripted) or useLiveHealingRunner (real) — both produce the same
+ * HealingRunState shape (see src/types/healingRun.ts), so this component has
+ * no idea (and doesn't care) which one is driving it.
+ */
+export default function HealingRunView({
+  state, failures, timeline, reportStats,
+  onStart, onReset, startLabel = 'Run', idleHint,
+  completedHealingByKey = {},
+}) {
+  const [confettiFired, setConfettiFired] = useState(false);
+
+  useEffect(() => {
+    if (state.phase === 'report' && state.showConfetti && !confettiFired) {
+      setConfettiFired(true);
+      const duration = 2000;
+      const end = Date.now() + duration;
+      (function frame() {
+        confetti({ particleCount: 4, angle: 60, spread: 60, origin: { x: 0 }, colors: ['#22c55e', '#3b82f6', '#a855f7'] });
+        confetti({ particleCount: 4, angle: 120, spread: 60, origin: { x: 1 }, colors: ['#22c55e', '#3b82f6', '#a855f7'] });
+        if (Date.now() < end) requestAnimationFrame(frame);
+      })();
+    }
+    if (state.phase === 'idle') setConfettiFired(false);
+  }, [state.phase, state.showConfetti, confettiFired]);
+
+  const activeSuite = state.suites.find((s) => s.status === 'running');
+  const isRunning = state.phase !== 'idle' && state.phase !== 'report';
+  const currentHealingKey = state.healing?.key;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-end flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <PhaseBadge phase={state.phase} />
+          {state.phase === 'idle' ? (
+            <button onClick={onStart} className="btn-primary bg-purple-600 hover:bg-purple-500">
+              <Play className="w-4 h-4" /> {startLabel}
+            </button>
+          ) : (
+            <button onClick={onReset} disabled={isRunning} className="btn-secondary disabled:opacity-40">
+              <RotateCcw className="w-4 h-4" /> Reset
+            </button>
+          )}
+        </div>
+      </div>
+
+      {state.phase === 'idle' && (
+        <div className="glass-card p-12 text-center text-gray-500 max-w-xl mx-auto">
+          <Zap className="w-10 h-10 mx-auto mb-3 text-purple-500/50" />
+          <p className="text-sm">{idleHint}</p>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {state.phase === 'connecting' && (
+          <motion.div key="connecting" exit={{ opacity: 0 }}>
+            <ConnectingPanel steps={state.connectSteps} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {(state.phase === 'running' || state.phase === 'failures' || state.phase === 'healing' || state.phase === 'report') && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="glass-card p-5">
+          <h2 className="text-sm font-semibold text-white mb-4">Regression Execution</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <SuiteProgress suites={state.suites} />
+            <LogConsole
+              lines={activeSuite?.logs || state.suites.find((s) => s.status !== 'pending')?.logs || []}
+              active={!!activeSuite}
+              height="h-40"
+            />
+          </div>
+        </motion.div>
+      )}
+
+      {(state.phase === 'failures' || state.phase === 'healing' || state.phase === 'report') && (
+        <div>
+          <h2 className="text-sm font-semibold text-white mb-3">Failed Test Cases</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {failures.filter((f) => state.revealedFailures.includes(f.key)).map((f, i) => (
+              <FailureCard key={f.key} failure={f} index={i} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(state.phase === 'healing' || state.phase === 'report') && (
+        <div className="space-y-4">
+          <h2 className="text-sm font-semibold text-white">AI Analysis &amp; Healing</h2>
+          {failures.map((f) => {
+            const isLive = currentHealingKey === f.key;
+            const isDone = state.healedKeys.includes(f.key);
+            if (!isLive && !isDone) return null;
+            const healing = isLive ? state.healing : (completedHealingByKey[f.key] || buildCompletedHealing(f, {}));
+            return <HealingCard key={f.key} healing={healing} />;
+          })}
+
+          {state.healing?.result && (
+            <div className="pt-2">
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">AI Reasoning</p>
+              <AIChatBubble text={state.healing.result.reasoning} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {(state.phase === 'healing' || state.phase === 'report') && timeline.length > 0 && (
+        <div className="glass-card p-5">
+          <h2 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <ClipboardList className="w-4 h-4 text-blue-400" /> AI Timeline
+          </h2>
+          <AITimeline events={timeline} count={state.timelineCount} />
+        </div>
+      )}
+
+      <AnimatePresence>
+        {state.phase === 'report' && reportStats && (
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <FileCheck className="w-4 h-4 text-green-400" /> Executive AI Report — Regression Summary
+            </h2>
+            <ExecutiveReport stats={reportStats} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
