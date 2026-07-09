@@ -8,7 +8,6 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const config = require('./config/config');
 const { getDatabase } = require('./config/database');
-const { initializeScheduler } = require('./services/scheduler.service');
 const { initializePoller } = require('./services/jiraPoller.service');
 const { errorHandler, notFoundHandler, logger } = require('./middleware/errorHandler');
 
@@ -92,8 +91,12 @@ async function bootstrap() {
   try {
     getDatabase();
     logger.info('[DB] Connected and schema ready');
-    initializeScheduler();
-    logger.info('[Scheduler] Initialized');
+    // Scheduler is intentionally NOT auto-started: it's removed from the UI
+    // (no way to see/manage/stop its cron jobs anymore) and its hourly smoke
+    // run was firing concurrently with manual/demo runs, spawning a second
+    // Playwright process against the same test-results output and
+    // contributing to runs looking "stuck" with no visible cause. The
+    // /api/scheduler routes still exist for direct API use if ever needed.
     initializePoller();
     logger.info('[JiraPoller] Initialized');
     app.listen(PORT, () => {

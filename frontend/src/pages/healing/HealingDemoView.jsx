@@ -1,19 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
 import {
-  Sparkles, Play, RotateCcw, CheckCircle2, XCircle, Loader2,
+  Play, RotateCcw, CheckCircle2, XCircle, Loader2,
   Zap, FileCheck, ClipboardList,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { useDemoRunner } from '../hooks/useDemoRunner';
-import { FAILURES, HEALING_THOUGHT_STEPS, RCA_THOUGHT_STEPS, HEALING_RESULTS, HEALING_RETRY_LOGS } from '../data/demoScript';
-import SuiteProgress from '../components/demo/SuiteProgress';
-import LogConsole from '../components/demo/LogConsole';
-import HealingCard from '../components/demo/HealingCard';
-import AITimeline from '../components/demo/AITimeline';
-import AIChatBubble from '../components/demo/AIChatBubble';
-import ExecutiveReport from '../components/demo/ExecutiveReport';
+import { useDemoRunner } from '../../hooks/useDemoRunner';
+import { FAILURES, HEALING_THOUGHT_STEPS, RCA_THOUGHT_STEPS, HEALING_RESULTS, HEALING_RETRY_LOGS } from '../../data/demoScript';
+import SuiteProgress from '../../components/demo/SuiteProgress';
+import LogConsole from '../../components/demo/LogConsole';
+import HealingCard from '../../components/demo/HealingCard';
+import AITimeline from '../../components/demo/AITimeline';
+import AIChatBubble from '../../components/demo/AIChatBubble';
+import ExecutiveReport from '../../components/demo/ExecutiveReport';
 
 const PHASE_LABEL = {
   idle: null,
@@ -79,10 +79,9 @@ function FailureCard({ failure, index }) {
   );
 }
 
-export default function DemoModePage() {
+export default function HealingDemoView() {
   const { state, start, reset, reportStats, timeline } = useDemoRunner();
   const [confettiFired, setConfettiFired] = useState(false);
-  const runningLogsRef = useRef(null);
 
   useEffect(() => {
     if (state.phase === 'report' && state.showConfetti && !confettiFired) {
@@ -104,16 +103,7 @@ export default function DemoModePage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-6 h-6 text-purple-400" /> AI Healing Demo
-          </h1>
-          <p className="text-sm text-gray-400 mt-0.5">
-            Scripted walkthrough of autonomous failure detection, root-cause analysis, and self-healing.
-          </p>
-        </div>
+      <div className="flex items-center justify-end flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <PhaseBadge phase={state.phase} />
           {state.phase === 'idle' ? (
@@ -179,7 +169,6 @@ export default function DemoModePage() {
             return <HealingCard key={f.key} healing={healing} />;
           })}
 
-          {/* Live AI reasoning, chat-style */}
           {state.healing?.result && (
             <div className="pt-2">
               <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">AI Reasoning</p>

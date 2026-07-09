@@ -1,10 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const config = require('../config/config');
-const { getDemoHealingRuns, resetDemoLocators } = require('../services/demoHealingAgent.service');
+const { getDemoHealingRuns, resetDemoLocators, getLocatorsStatus } = require('../services/demoHealingAgent.service');
 
 router.get('/status', (req, res) => {
   res.json({ success: true, data: { demoMode: config.demoMode } });
+});
+
+router.get('/locators', (req, res) => {
+  try {
+    res.json({ success: true, data: getLocatorsStatus() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.get('/runs', (req, res) => {

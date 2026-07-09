@@ -4,8 +4,17 @@ const { healTestCase, getHealingStats, classifyFailure } = require('../services/
 const { runRealHealingCycle, findBrokenLocatorInMessage } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 const config = require('../config/config');
+const { withTimeout } = require('../utils/withTimeout');
 
 const jiraUrl = (key) => key ? `${config.jira.baseUrl}/browse/${key}` : null;
+
+// A synchronous HTTP request can't be allowed to hang as long as a
+// background job can — cap it well under typical proxy/browser timeouts.
+// The healing cycle itself keeps running in the background past this point
+// (Node doesn't cancel it) and will still persist its result to
+// demo_healing_runs, visible in the Live Locator Healing panel, even if
+// this specific request times out first.
+const ANALYZE_TIMEOUT_MS = 120 * 1000;
 
 router.post('/analyze', async (req, res) => {
   try {
@@ -18,9 +27,30 @@ router.post('/analyze', async (req, res) => {
     // fix it whenever that's possible.
     const match = findBrokenLocatorInMessage(errorMessage);
     if (match) {
-      const result = await runRealHealingCycle({
-        locatorKey: match.locatorKey, testFile: filePath, failedTestNames: name ? [name] : [],
+      const result = await withTimeout(
+        runRealHealingCycle({
+          locatorKey: match.locatorKey, testFile: filePath, failedTestNames: name ? [name] : [],
+        }),
+        ANALYZE_TIMEOUT_MS,
+        `Fix with AI for ${match.locatorKey}`
+      ).catch((err) => {
+        console.error('[Healing] real fix cycle failed or timed out:', err.message);
+        return { timedOut: true, error: err.message };
       });
+
+      if (result?.timedOut) {
+        return res.json({
+          success: true,
+          data: {
+            real: true,
+            fixed: false,
+            confidence: 0,
+            reasoning: 'Still working on it in the background. Check the Live Locator Healing panel in a moment — it will show the result once the cycle finishes.',
+            note: 'The healing cycle is taking longer than this request will wait for; it has not failed, it is still running.',
+          },
+        });
+      }
+
       if (result) {
         return res.json({
           success: true,

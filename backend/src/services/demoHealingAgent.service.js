@@ -287,7 +287,11 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
 
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
-  const browser = await chromium.launch();
+  // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
+  // can fail to initialize in a container (no user namespaces, tiny /dev/shm)
+  // and either crash or hang indefinitely with no error — a real cause of
+  // runs getting stuck on "Running"/"Healing" in production.
+  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   const context = await browser.newContext();
   await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
@@ -380,7 +384,20 @@ function resetDemoLocators() {
   const cfg = loadLocatorConfig();
   for (const key of Object.keys(cfg)) cfg[key].healed = null;
   saveLocatorConfig(cfg);
-  return cfg;
+  return getLocatorsStatus();
+}
+
+// Current state of every registered demo locator, in a shape the UI can
+// render directly (so a reset has something visible to change on screen).
+function getLocatorsStatus() {
+  const cfg = loadLocatorConfig();
+  return Object.entries(cfg).map(([locatorKey, entry]) => ({
+    locatorKey,
+    working: entry.working,
+    broken: entry.broken,
+    healed: entry.healed,
+    state: entry.healed ? 'healed' : (config.demoMode ? 'broken' : 'working'),
+  }));
 }
 
 function getDemoHealingRuns({ limit = 50 } = {}) {
@@ -396,4 +413,4 @@ function getDemoHealingRuns({ limit = 50 } = {}) {
   }));
 }
 
-module.exports = { runRealHealingCycle, findBrokenLocatorInMessage, resetDemoLocators, getDemoHealingRuns };
+module.exports = { runRealHealingCycle, findBrokenLocatorInMessage, resetDemoLocators, getDemoHealingRuns, getLocatorsStatus };

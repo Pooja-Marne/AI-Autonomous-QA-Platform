@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node --experimental-sqlite src/index.js",
     "dev": "nodemon --exec \"node --experimental-sqlite\" src/index.js",
-    "seed": "node src/database/seed.js"
+    "seed": "node src/database/seed.js",
+    "test": "node --test src/**/*.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",

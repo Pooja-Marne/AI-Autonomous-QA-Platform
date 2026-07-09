@@ -6,11 +6,9 @@ import Dashboard from './pages/Dashboard';
 import TestRuns from './pages/TestRuns';
 import RunDetails from './pages/RunDetails';
 import Analytics from './pages/Analytics';
-import HealingPage from './pages/HealingPage';
+import AIHealingPage from './pages/AIHealingPage';
 import JiraPage from './pages/JiraPage';
-import SchedulerPage from './pages/SchedulerPage';
 import CoveragePage from './pages/CoveragePage';
-import DemoModePage from './pages/DemoModePage';
 import { triggersApi } from './services/api';
 
 function AppShell() {
@@ -53,11 +51,9 @@ function AppShell() {
             <Route path="/runs" element={<TestRuns />} />
             <Route path="/runs/:id" element={<RunDetails />} />
             <Route path="/analytics" element={<Analytics />} />
-            <Route path="/healing" element={<HealingPage />} />
+            <Route path="/healing" element={<AIHealingPage />} />
             <Route path="/jira" element={<JiraPage />} />
-            <Route path="/scheduler" element={<SchedulerPage />} />
             <Route path="/coverage" element={<CoveragePage />} />
-            <Route path="/demo" element={<DemoModePage />} />
           </Routes>
         </div>
       </main>

@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, PlayCircle, BarChart3, Wrench, Calendar, Trello, Zap, ShieldCheck, Sparkles } from 'lucide-react';
+import { LayoutDashboard, PlayCircle, BarChart3, Wrench, Trello, Zap, ShieldCheck } from 'lucide-react';
 import clsx from 'clsx';
 
 const nav = [
@@ -7,10 +7,8 @@ const nav = [
   { to: '/runs', label: 'Test Runs', icon: PlayCircle },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/healing', label: 'AI Healing', icon: Wrench },
-  { to: '/demo', label: 'AI Healing Demo', icon: Sparkles },
   { to: '/coverage', label: 'Coverage Intelligence', icon: ShieldCheck },
   { to: '/jira', label: 'Jira', icon: Trello },
-  { to: '/scheduler', label: 'Scheduler', icon: Calendar },
 ];
 
 export default function Sidebar() {

@@ -7,6 +7,14 @@ const { healMultipleTestCases } = require('./aiHealing.service');
 const { runRealHealingCycle, findBrokenLocatorInMessage } = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
+const { withTimeout } = require('../utils/withTimeout');
+
+// Hard ceilings so a hang anywhere inside the pipeline (browser launch,
+// AI call, child process) can never leave a run stuck on "Running"/"Healing"
+// forever — the run always transitions to a terminal status within these
+// bounds, even if the underlying cause is never fixed.
+const RUN_TIMEOUT_MS = 8 * 60 * 1000; // whole pipeline: spawn Playwright + all healing
+const HEALING_CYCLE_TIMEOUT_MS = 4 * 60 * 1000; // one real self-healing cycle
 
 const TESTS_DIR = path.resolve(__dirname, '../../../tests');
 
@@ -131,11 +139,19 @@ async function startPlaywrightRun({ suite = 'smoke', trigger = 'manual', jiraIss
     VALUES (?, ?, 'running', ?, 'playwright', 0, ?)
   `).run(runId, runName, trigger, new Date().toISOString());
 
-  // Run async
-  runAndProcess(runId, suite, runName, trigger).catch((err) => {
-    console.error('[Playwright Runner] Fatal error:', err.message);
-    db.prepare(`UPDATE test_runs SET status='failed' WHERE id=?`).run(runId);
-  });
+  // Run async, but never let it hang the row forever: if the whole pipeline
+  // (Playwright process, browser launch, AI calls, retries) doesn't settle
+  // within RUN_TIMEOUT_MS, force the row to a terminal state ourselves. The
+  // underlying call may still be running in the background at that point —
+  // we simply stop waiting on it and stop trusting its result.
+  withTimeout(runAndProcess(runId, suite, runName, trigger), RUN_TIMEOUT_MS, `Playwright run ${runId}`)
+    .catch((err) => {
+      console.error('[Playwright Runner] Fatal error:', err.message);
+      db.prepare(`
+        UPDATE test_runs SET status='failed', completed_at=?
+        WHERE id=? AND status IN ('running', 'healing')
+      `).run(new Date().toISOString(), runId);
+    });
 
   return { runId, name: runName, status: 'running' };
 }
@@ -209,10 +225,14 @@ async function runAndProcess(runId, suite, runName, trigger) {
       for (const [locatorKey, cases] of byLocator) {
         console.log(`[Playwright Runner] Routing locator "${locatorKey}" to the real self-healing agent...`);
         db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
-        const result = await runRealHealingCycle({
-          locatorKey, runId, testFile: cases[0].filePath, failedTestNames: cases.map((c) => c.name),
-        }).catch((err) => {
-          console.error(`[Playwright Runner] Self-healing cycle failed:`, err.message);
+        const result = await withTimeout(
+          runRealHealingCycle({
+            locatorKey, runId, testFile: cases[0].filePath, failedTestNames: cases.map((c) => c.name),
+          }),
+          HEALING_CYCLE_TIMEOUT_MS,
+          `Self-healing cycle for ${locatorKey}`
+        ).catch((err) => {
+          console.error(`[Playwright Runner] Self-healing cycle failed or timed out:`, err.message);
           return null;
         });
 
