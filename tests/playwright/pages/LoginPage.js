@@ -3,7 +3,7 @@ const { resolve } = require('../demo/locatorResolver');
 class LoginPage {
   constructor(page) {
     this.page = page;
-    this.usernameInput = page.locator('[data-test="username"]');
+    this.usernameInput = page.locator('[data-test="broken_username"]');
     this.passwordInput = page.locator('[data-test="password"]');
     // loginButton is DEMO_MODE-controlled (see tests/playwright/demo/) —
     // intentionally broken while DEMO_MODE=true to give the AI Healing Agent
