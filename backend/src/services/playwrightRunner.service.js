@@ -192,9 +192,9 @@ async function startPlaywrightRun({ suite = 'smoke', trigger = 'manual', jiraIss
   console.log(`[Playwright Runner] Starting run ${runId} | Suite: ${suite}`);
 
   db.prepare(`
-    INSERT INTO test_runs (id, name, status, trigger_type, branch, total_tests, started_at)
-    VALUES (?, ?, 'running', ?, 'playwright', 0, ?)
-  `).run(runId, runName, trigger, new Date().toISOString());
+    INSERT INTO test_runs (id, name, status, trigger_type, branch, total_tests, started_at, suite)
+    VALUES (?, ?, 'running', ?, 'playwright', 0, ?, ?)
+  `).run(runId, runName, trigger, new Date().toISOString(), suite);
 
   // Run async, but never let it hang the row forever: if the whole pipeline
   // (Playwright process, browser launch, AI calls, retries) doesn't settle
@@ -228,6 +228,13 @@ async function runAndProcess(runId, suite, runName, trigger) {
 
   try {
     const { json: pwResults, stderr, exitCode } = await runPlaywrightTests(suite, runId);
+
+    // Persist the incremental logs captured during execution now, while
+    // they're still in memory — activeRuns is deleted once this function
+    // returns, and without this, historical "runtime logs" browsing would
+    // have nothing to show for any run older than the current in-progress one.
+    const capturedLogs = activeRuns.get(runId)?.logs || [];
+    db.prepare(`UPDATE test_runs SET execution_logs=? WHERE id=?`).run(JSON.stringify(capturedLogs), runId);
 
     if (!pwResults) {
       console.error(`[Playwright Runner] Could not parse results (exit ${exitCode}) — marking run as failed. stderr:\n${stderr.slice(0, 2000)}`);
@@ -370,7 +377,37 @@ async function getRunById(runId) {
   }));
 
   const healingActions = db.prepare('SELECT * FROM healing_actions WHERE run_id = ? ORDER BY created_at').all(runId);
-  return { ...run, testCases, healingActions };
+
+  // demo_healing_runs carries the rich, presentation-oriented detail (real
+  // screenshot/trace/DOM artifacts, live-verified locator diff, step logs)
+  // that the AI Healing execution-detail view needs beyond healing_actions.
+  const demoHealingRuns = db.prepare('SELECT * FROM demo_healing_runs WHERE run_id = ? ORDER BY created_at').all(runId).map((r) => ({
+    ...r,
+    failedTests: JSON.parse(r.failed_tests || '[]'),
+    logs: JSON.parse(r.logs || '[]'),
+    liveVerified: Boolean(r.live_verified),
+  }));
+
+  return {
+    ...run,
+    executionLogs: JSON.parse(run.execution_logs || '[]'),
+    testCases, healingActions, demoHealingRuns,
+  };
+}
+
+// Latest-first execution history for a given suite key (e.g. 'smoke',
+// 'login', 'full_regression') — powers the AI Healing page's "click a
+// suite, see its most recent runs" browsing view.
+async function getRunsBySuite(suite, { limit = 10 } = {}) {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM test_runs WHERE suite = ? ORDER BY created_at DESC LIMIT ?').all(suite, limit);
+}
+
+// Most recent execution across every suite — used to populate the AI
+// Healing page by default when it's opened, before any suite is picked.
+async function getLatestRun() {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM test_runs ORDER BY created_at DESC LIMIT 1').get() || null;
 }
 
 async function getAllRuns({ page = 1, limit = 20 } = {}) {
@@ -406,4 +443,4 @@ async function getTestStats() {
   return { overall, recentRuns, failuresByModule };
 }
 
-module.exports = { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun };
+module.exports = { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun, getRunsBySuite, getLatestRun };

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun } = require('../services/playwrightRunner.service');
+const { startPlaywrightRun, getRunById, getAllRuns, getTestStats, getActiveRun, getRunsBySuite, getLatestRun } = require('../services/playwrightRunner.service');
 const { getActiveCycle } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 
@@ -19,6 +19,27 @@ router.get('/', async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const result = await getAllRuns({ page: parseInt(page), limit: parseInt(limit) });
     res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Must be registered before '/:id' below — different segment count so it
+// never actually collides, but keeping it here documents the intent.
+router.get('/by-suite/:suite', async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    const runs = await getRunsBySuite(req.params.suite, { limit: parseInt(limit) });
+    res.json({ success: true, data: runs });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.get('/latest', async (req, res) => {
+  try {
+    const run = await getLatestRun();
+    res.json({ success: true, data: run });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

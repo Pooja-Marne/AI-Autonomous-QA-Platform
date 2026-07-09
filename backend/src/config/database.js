@@ -247,6 +247,16 @@ function initializeSchema(db) {
   // suite exists. Migrate any schedules seeded before this was known.
   db.exec(`UPDATE scheduler_config SET test_suite = 'regression' WHERE test_suite IN ('api', 'ui')`);
 
+  // Additive migration: test_runs predates suite-scoped execution history
+  // (the AI Healing page browsing "latest run for suite X").
+  const testRunCols = db.prepare('PRAGMA table_info(test_runs)').all().map((c) => c.name);
+  if (!testRunCols.includes('suite')) {
+    db.exec('ALTER TABLE test_runs ADD COLUMN suite TEXT');
+  }
+  if (!testRunCols.includes('execution_logs')) {
+    db.exec('ALTER TABLE test_runs ADD COLUMN execution_logs TEXT');
+  }
+
   console.log('[DB] Schema initialized successfully');
 }
 

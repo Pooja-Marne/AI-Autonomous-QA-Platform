@@ -22,6 +22,8 @@ export const runsApi = {
   delete: (id) => api.delete(`/runs/${id}`),
   getTestCases: (id, params) => api.get(`/runs/${id}/test-cases`, { params }),
   getLive: (id) => api.get(`/runs/${id}/live`),
+  getBySuite: (suite, params) => api.get(`/runs/by-suite/${suite}`, { params }),
+  getLatest: () => api.get('/runs/latest'),
 };
 
 export const jiraApi = {
