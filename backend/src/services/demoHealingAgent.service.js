@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
+const Anthropic = require('@anthropic-ai/sdk');
 const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 
@@ -12,6 +13,7 @@ const ARTIFACTS_DIR = path.join(__dirname, '..', '..', 'data', 'demo-artifacts')
 const BASE_URL = 'https://www.saucedemo.com'; // must match tests/playwright.config.js use.baseURL
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
+const anthropic = config.anthropic.apiKey ? new Anthropic({ apiKey: config.anthropic.apiKey }) : null;
 
 // Real (not simulated) reproduction steps + metadata for every locator that
 // can be intentionally broken via tests/playwright/demo/demoLocators.json.
@@ -75,42 +77,146 @@ function stripForPrompt(html) {
     .slice(0, 8000);
 }
 
-async function analyzeWithAI({ elementDescription, oldLocator, domSnapshot }) {
-  const prompt = `You are an expert Playwright test engineer performing live root-cause analysis on a broken locator.
+// Common prefixes/suffixes intentionally used (here and by testers generally)
+// to simulate a "renamed attribute" break — e.g. broken_login_button.
+const NOISE_PATTERNS = [/^broken[_-]/i, /[_-]broken$/i, /^invalid[_-]/i, /^old[_-]/i, /^legacy[_-]/i, /^stale[_-]/i];
+const ATTR_SYNONYMS = { 'data-test': ['data-testid', 'data-qa', 'data-cy', 'id'], 'data-testid': ['data-test', 'data-qa', 'data-cy', 'id'] };
+
+// Step 0, before any AI call: try Playwright's own querying against a set of
+// deterministic candidate selectors derived from the broken one (stripped
+// noise prefixes/suffixes, common attribute-name synonyms). This is exactly
+// what a human would try first, costs nothing, can't be rate-limited, and
+// resolves the common "attribute got renamed" case outright.
+async function tryNativeLocatorRepair(page, oldLocator) {
+  const attrMatch = oldLocator.match(/\[([\w-]+)=["']([^"']+)["']\]/);
+  const candidates = new Set();
+
+  if (attrMatch) {
+    const [, attr, value] = attrMatch;
+    const cleanedValues = new Set([value]);
+    for (const pattern of NOISE_PATTERNS) cleanedValues.add(value.replace(pattern, ''));
+    // Also try hyphen/underscore normalization on each variant — a rename
+    // that swaps separators (e.g. login-button -> broken_login_button)
+    // won't be caught by prefix-stripping alone.
+    for (const v of Array.from(cleanedValues)) {
+      cleanedValues.add(v.replace(/_/g, '-'));
+      cleanedValues.add(v.replace(/-/g, '_'));
+    }
+
+    for (const cleanValue of cleanedValues) {
+      if (cleanValue && cleanValue !== value) candidates.add(`[${attr}="${cleanValue}"]`);
+      for (const altAttr of ATTR_SYNONYMS[attr] || []) {
+        candidates.add(altAttr === 'id' ? `#${cleanValue}` : `[${altAttr}="${cleanValue}"]`);
+      }
+    }
+  }
+
+  for (const candidate of candidates) {
+    const count = await page.locator(candidate).count().catch(() => 0);
+    if (count === 1) return candidate;
+  }
+  return null;
+}
+
+function buildHealingPrompt({ elementDescription, oldLocator, domSnapshot }) {
+  return `You are an expert Playwright test engineer performing live root-cause analysis on a broken locator.
 
 Element we're trying to locate: ${elementDescription}
 Locator that is currently failing: ${oldLocator}
 Live DOM snapshot of the page (HTML, truncated):
 ${stripForPrompt(domSnapshot)}
 
-The locator above does not match anything in the live DOM. Find the real element in the DOM snapshot that serves the same purpose, and propose a robust CSS selector for it (prefer data-test/data-testid attributes when present).
+The locator above does not match anything in the live DOM. Find the real element in the DOM snapshot that serves the same purpose, and propose a robust CSS selector for it (prefer data-test/data-testid attributes when present).`;
+}
 
-Respond in JSON:
-{
-  "rootCause": "<one or two sentences explaining exactly why the old locator no longer matches, referencing what you actually found in the DOM>",
-  "suggestedLocator": "<a single CSS selector string>",
-  "confidence": <integer 0-100>
-}`;
+async function analyzeWithOpenAI(args) {
+  const response = await openai.chat.completions.create({
+    model: config.openai.model,
+    messages: [
+      { role: 'system', content: 'You are an expert automated QA engineer specializing in Playwright locator healing. Respond in JSON: {"rootCause": "...", "suggestedLocator": "...", "confidence": <0-100>}' },
+      { role: 'user', content: buildHealingPrompt(args) },
+    ],
+    temperature: 0.2,
+    max_tokens: 500,
+    response_format: { type: 'json_object' },
+  });
+  const result = JSON.parse(response.choices[0].message.content);
+  return {
+    rootCause: result.rootCause || 'AI could not determine a root cause.',
+    suggestedLocator: result.suggestedLocator || null,
+    confidence: typeof result.confidence === 'number' ? result.confidence : 0,
+  };
+}
 
-  try {
-    const response = await openai.chat.completions.create({
-      model: config.openai.model,
-      messages: [
-        { role: 'system', content: 'You are an expert automated QA engineer specializing in Playwright locator healing.' },
-        { role: 'user', content: prompt },
-      ],
-      temperature: 0.2,
-      max_tokens: 500,
-      response_format: { type: 'json_object' },
-    });
-    const result = JSON.parse(response.choices[0].message.content);
+async function analyzeWithClaude(args) {
+  if (!anthropic) throw new Error('ANTHROPIC_API_KEY not configured — cannot fall back to Claude');
+  const response = await anthropic.messages.create({
+    model: config.anthropic.model,
+    max_tokens: 600,
+    tools: [{
+      name: 'emit_locator_fix',
+      description: 'Emit the root cause and a replacement CSS selector for a broken Playwright locator.',
+      input_schema: {
+        type: 'object',
+        properties: {
+          rootCause: { type: 'string' },
+          suggestedLocator: { type: 'string' },
+          confidence: { type: 'number', description: '0-100' },
+        },
+        required: ['rootCause', 'suggestedLocator', 'confidence'],
+      },
+    }],
+    tool_choice: { type: 'tool', name: 'emit_locator_fix' },
+    messages: [{ role: 'user', content: buildHealingPrompt(args) }],
+  });
+  const block = response.content.find((b) => b.type === 'tool_use');
+  if (!block || response.stop_reason === 'max_tokens') throw new Error('Claude response incomplete or truncated');
+  return {
+    rootCause: block.input.rootCause || 'AI could not determine a root cause.',
+    suggestedLocator: block.input.suggestedLocator || null,
+    confidence: typeof block.input.confidence === 'number' ? block.input.confidence : 0,
+  };
+}
+
+// Tiered resolution, cheapest/fastest/most-reliable first:
+//   1. Deterministic native Playwright querying (no AI, no quota, instant)
+//   2. OpenAI (GPT-4.1) DOM analysis
+//   3. Claude (Sonnet) DOM analysis, only if OpenAI errors (e.g. rate limit)
+// Every path returns the same shape plus `resolvedBy` for transparency in
+// the UI/logs about which tier actually produced the fix.
+async function analyzeLocatorFailure({ page, elementDescription, oldLocator, domSnapshot, log }) {
+  log('Trying deterministic native locator repair (Playwright querying, no AI)...');
+  const nativeMatch = await tryNativeLocatorRepair(page, oldLocator);
+  if (nativeMatch) {
+    log(`Native repair resolved it without any AI call: ${nativeMatch}`);
     return {
-      rootCause: result.rootCause || 'AI could not determine a root cause.',
-      suggestedLocator: result.suggestedLocator || null,
-      confidence: typeof result.confidence === 'number' ? result.confidence : 0,
+      rootCause: `Resolved deterministically: "${oldLocator}" appears to be a renamed/prefixed variant of an existing attribute. Playwright confirmed exactly one live element matches "${nativeMatch}".`,
+      suggestedLocator: nativeMatch,
+      confidence: 100,
+      resolvedBy: 'native',
     };
-  } catch (err) {
-    return { rootCause: `AI analysis failed: ${err.message}`, suggestedLocator: null, confidence: 0 };
+  }
+  log('No native match found — escalating to AI DOM analysis...');
+
+  const args = { elementDescription, oldLocator, domSnapshot };
+  try {
+    log('Calling OpenAI (GPT-4.1) for DOM analysis...');
+    const result = await analyzeWithOpenAI(args);
+    return { ...result, resolvedBy: 'openai' };
+  } catch (openaiErr) {
+    log(`OpenAI unavailable (${openaiErr.message}) — falling back to Claude...`);
+    try {
+      const result = await analyzeWithClaude(args);
+      return { ...result, resolvedBy: 'claude' };
+    } catch (claudeErr) {
+      log(`Claude fallback also failed: ${claudeErr.message}`);
+      return {
+        rootCause: `AI analysis failed on both providers. OpenAI: ${openaiErr.message} | Claude: ${claudeErr.message}`,
+        suggestedLocator: null,
+        confidence: 0,
+        resolvedBy: 'none',
+      };
+    }
   }
 }
 
@@ -213,10 +319,11 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
     await context.tracing.stop({ path: traceAbsPath });
     log(`Saved Playwright trace -> ${tracePath}`);
 
-    log('Sending real DOM + error context to AI for root-cause analysis...');
-    const analysis = await analyzeWithAI({ elementDescription: meta.elementDescription, oldLocator, domSnapshot: domContent });
-    log(`AI root cause: ${analysis.rootCause}`);
-    log(`AI suggested locator: ${analysis.suggestedLocator} (confidence ${analysis.confidence}%)`);
+    const analysis = await analyzeLocatorFailure({
+      page, elementDescription: meta.elementDescription, oldLocator, domSnapshot: domContent, log,
+    });
+    log(`Root cause (via ${analysis.resolvedBy}): ${analysis.rootCause}`);
+    log(`Suggested locator: ${analysis.suggestedLocator} (confidence ${analysis.confidence}%)`);
 
     let liveVerified = false;
     if (analysis.suggestedLocator) {
@@ -250,9 +357,10 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
     }
 
     const timeTakenMs = Date.now() - startedAt;
+    const resolverTag = { native: '[Native]', openai: '[OpenAI]', claude: '[Claude]', none: '[Failed]' }[analysis.resolvedBy] || '';
     record = {
       id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-      oldLocator, newLocator: analysis.suggestedLocator, rootCause: analysis.rootCause,
+      oldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
       confidenceScore: analysis.confidence, liveVerified, healingStatus, retryStatus,
       screenshotPath, tracePath, domSnapshotPath, timeTakenMs, logs,
       codeSnippet: healingStatus === 'healed' ? buildCodeSnippet(locatorKey, meta.propertyName, analysis.suggestedLocator) : null,
