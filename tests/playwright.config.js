@@ -1,4 +1,7 @@
 const { defineConfig, devices } = require('@playwright/test');
+const { loadEnv } = require('./loadEnv');
+
+loadEnv();
 
 module.exports = defineConfig({
   testDir: './playwright/specs',
@@ -16,7 +19,7 @@ module.exports = defineConfig({
   ],
 
   use: {
-    baseURL: 'https://www.saucedemo.com',
+    baseURL: process.env.BASE_URL || 'https://www.saucedemo.com',
     headless: true,
     viewport: { width: 1280, height: 720 },
     screenshot: 'only-on-failure',

@@ -4,7 +4,9 @@ const path = require('path');
 const fs = require('fs');
 const { getDatabase } = require('../config/database');
 const { healMultipleTestCases } = require('./aiHealing.service');
-const { runRealHealingCycle, findBrokenLocatorInMessage } = require('./demoHealingAgent.service');
+const {
+  runRealHealingCycle, runGenericHealingCycle, findBrokenLocatorInMessage, extractSelectorFromMessage,
+} = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 const { withTimeout } = require('../utils/withTimeout');
@@ -276,10 +278,16 @@ async function runAndProcess(runId, suite, runName, trigger) {
       }
     }
 
-    // AI Healing for failures — failures whose error message matches a known
-    // broken locator get the real healing cycle (live DOM capture, real AI
-    // analysis, real retry against the actual app); everything else goes
-    // through the generic (simulated) healing pipeline.
+    // AI Healing for failures, tiered by what's actually verifiable:
+    //  1. A known, pre-registered demo locator (LoginPage.loginButton etc.) —
+    //     the demo-repeatable cycle (in-memory override, not source-patched).
+    //  2. ANY other selector Playwright reported as unresolvable — the
+    //     generalized real cycle: live DOM capture, real AI analysis, live
+    //     verification, and a real retry, with the fix written directly into
+    //     the Page Object source file that owns it.
+    //  3. Failures with no locator at all (assertion/timeout/network) — no
+    //     DOM-based fix is possible; these are diagnosed (real OpenAI call)
+    //     but never silently marked "healed" — see aiHealing.service.js.
     let healed = 0, notFixable = 0;
     let remainingFailedCases = failedCases;
 
@@ -318,13 +326,48 @@ async function runAndProcess(runId, suite, runName, trigger) {
     }
 
     if (remainingFailedCases.length > 0) {
-      console.log(`[Playwright Runner] ${remainingFailedCases.length} failures — starting AI healing...`);
-      db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
-      const healingResults = await healMultipleTestCases(remainingFailedCases);
-      for (const r of healingResults) {
-        if (r.healingStatus === 'healed') { healed++; failed--; }
-        else notFixable++;
+      const byGenericSelector = new Map();
+      const noSelector = [];
+      for (const fc of remainingFailedCases) {
+        const selector = extractSelectorFromMessage(fc.errorMessage);
+        if (!selector) { noSelector.push(fc); continue; }
+        const key = `${fc.module}::${selector}`;
+        if (!byGenericSelector.has(key)) byGenericSelector.set(key, []);
+        byGenericSelector.get(key).push(fc);
       }
+
+      for (const [key, cases] of byGenericSelector) {
+        console.log(`[Playwright Runner] Routing unrecognized broken selector "${key}" to the generalized self-healing agent...`);
+        db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
+        const result = await withTimeout(
+          runGenericHealingCycle({
+            module: cases[0].module, runId, testFile: cases[0].filePath,
+            failedTestNames: cases.map((c) => c.name), errorMessage: cases[0].errorMessage,
+          }),
+          HEALING_CYCLE_TIMEOUT_MS,
+          `Generalized self-healing cycle for ${key}`
+        ).catch((err) => {
+          console.error(`[Playwright Runner] Generalized self-healing cycle failed or timed out:`, err.message);
+          return null;
+        });
+
+        const isHealed = result?.healingStatus === 'healed';
+        for (const c of cases) {
+          if (isHealed) { healed++; failed--; }
+          else notFixable++;
+          db.prepare(`UPDATE test_cases SET healing_status=?, status=? WHERE id=?`)
+            .run(isHealed ? 'healed' : 'not_fixable', isHealed ? 'healed' : 'failed', c.id);
+        }
+      }
+      remainingFailedCases = noSelector;
+    }
+
+    if (remainingFailedCases.length > 0) {
+      // No locator to heal — these are diagnosed only (real OpenAI call,
+      // honest reasoning), never auto-marked as healed by chance.
+      console.log(`[Playwright Runner] ${remainingFailedCases.length} non-locator failures — running diagnosis only (no auto-fix possible)...`);
+      await healMultipleTestCases(remainingFailedCases);
+      notFixable += remainingFailedCases.length;
     }
 
     const completedAt = new Date().toISOString();

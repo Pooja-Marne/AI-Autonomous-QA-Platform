@@ -170,8 +170,18 @@ Generate a detailed healing plan in JSON:
   }
 }
 
+// This path only ever runs for failures with NO extractable locator
+// (assertion mismatches, timeouts, network/API errors) — anything
+// DOM-addressable is routed to the real healing pipeline in
+// demoHealingAgent.service.js before it ever reaches here. There is no
+// generalized, verifiable auto-fix for "the assertion changed" or "the
+// request timed out" without a real code change, so this never marks a
+// test "healed" — it produces a real OpenAI diagnosis (reasoning + a
+// suggested fix a human can apply) and always leaves the test as
+// not_fixable. Previously this used to fake a "healed" outcome via
+// Math.random() — that was misleading and has been removed.
 async function healTestCase(testCase) {
-  console.log(`[AI Healing] Attempting to heal: ${testCase.name}`);
+  console.log(`[AI Healing] Diagnosing (no auto-fix possible): ${testCase.name}`);
   const db = getDatabase();
 
   try {
@@ -179,16 +189,8 @@ async function healTestCase(testCase) {
     const healingPlan = await generateHealingSuggestion(testCase, failureAnalysis);
 
     const healingId = uuidv4();
-    const canHeal = failureAnalysis.canAutoHeal && healingPlan.estimatedSuccess;
-
-    let healingStatus = 'not_fixable';
-    let appliedFix = null;
-
-    if (canHeal) {
-      const healResult = await applyHealing(testCase, healingPlan);
-      healingStatus = healResult.success ? 'healed' : 'not_fixable';
-      appliedFix = healResult.fixApplied;
-    }
+    const healingStatus = 'not_fixable';
+    const appliedFix = null;
 
     // Merge jiraAlignment into the healing plan for storage
     const enrichedPlan = {
@@ -260,18 +262,6 @@ async function healMultipleTestCases(failedTestCases) {
     await new Promise((r) => setTimeout(r, 500));
   }
   return results;
-}
-
-async function applyHealing(testCase, plan) {
-  await new Promise((r) => setTimeout(r, 200 + Math.random() * 300));
-
-  const successProbability = plan.confidence > 0.7 ? 0.85 : plan.confidence > 0.5 ? 0.65 : 0.4;
-  const success = Math.random() < successProbability;
-
-  return {
-    success,
-    fixApplied: success ? `Applied: ${plan.healingAction}` : `Attempted: ${plan.healingAction} - Failed`,
-  };
 }
 
 function ruleBasedClassification(testCase) {
