@@ -128,13 +128,23 @@ export function useLiveHealingRunner() {
       }));
 
       if (isTerminal) {
+        const totalTests = run.total_tests || 0;
+        const healed = run.healed || 0;
+        const notFixable = run.not_fixable || 0;
+        const initiallyFailed = (run.failed || 0) + healed + notFixable;
+        // Keys here must match ExecutiveReport's CARDS exactly (suitesExecuted,
+        // tests, passed, initiallyFailed, aiHealed, manualInvestigation,
+        // successRate, healingSuccess) — it indexes stats by these names
+        // directly, so any mismatch silently renders that card as 0/blank.
         setReportStats({
-          totalTests: run.total_tests || 0,
+          suitesExecuted: suites.length,
+          tests: totalTests,
           passed: run.passed || 0,
-          failed: run.failed || 0,
-          healed: run.healed || 0,
-          notFixable: run.not_fixable || 0,
-          durationMs: run.duration_ms || 0,
+          initiallyFailed,
+          aiHealed: healed,
+          manualInvestigation: notFixable,
+          successRate: totalTests ? Math.round(((run.passed || 0) / totalTests) * 100) : 0,
+          healingSuccess: (healed + notFixable) ? Math.round((healed / (healed + notFixable)) * 100) : 0,
         });
         stopPolling();
       }

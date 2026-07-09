@@ -46,13 +46,17 @@ export interface TimelineEvent {
   detail?: string;
 }
 
+// Keys must match ExecutiveReport's CARDS exactly — it indexes stats by
+// these names directly (src/components/demo/ExecutiveReport.jsx).
 export interface ReportStats {
-  totalTests: number;
+  suitesExecuted: number;
+  tests: number;
   passed: number;
-  failed: number;
-  healed: number;
-  notFixable: number;
-  durationMs?: number;
+  initiallyFailed: number;
+  aiHealed: number;
+  manualInvestigation: number;
+  successRate: number; // 0-100
+  healingSuccess: number; // 0-100
 }
 
 export interface HealingRunState {
