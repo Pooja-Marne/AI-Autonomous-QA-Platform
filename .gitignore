@@ -25,6 +25,10 @@ tests/test-results/
 tests/playwright-report/
 test-results/
 playwright-report/
+tests/ui-shots/
+tests/ui-verify.js
+tests/demo-shots/
+tests/demo-verify.js
 
 # Logs
 *.log
