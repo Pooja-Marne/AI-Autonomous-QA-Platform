@@ -8,8 +8,15 @@ const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 
 const TESTS_DIR = config.automation.repoPath;
-const { loadEnv } = require(path.join(TESTS_DIR, 'loadEnv'));
-loadEnv(path.join(TESTS_DIR, 'test.env'));
+// Defensive: a missing/misplaced loadEnv.js or test.env (e.g. a deploy image
+// that didn't copy it) must never crash the whole backend on require — the
+// BASE_URL fallback below still keeps things working, just less centrally.
+try {
+  const { loadEnv } = require(path.join(TESTS_DIR, 'loadEnv'));
+  loadEnv(path.join(TESTS_DIR, 'test.env'));
+} catch (err) {
+  console.error(`[Self-Healing] Could not load tests/test.env (${err.message}) — falling back to the hardcoded default BASE_URL.`);
+}
 
 const PAGES_DIR = path.join(TESTS_DIR, 'playwright', 'pages');
 const LOCATORS_PATH = path.join(TESTS_DIR, 'playwright', 'demo', 'demoLocators.json');

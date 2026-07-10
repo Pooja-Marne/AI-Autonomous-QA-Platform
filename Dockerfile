@@ -21,6 +21,8 @@ WORKDIR /app/tests
 COPY tests/package*.json ./
 RUN npm ci
 COPY tests/playwright.config.js ./
+COPY tests/loadEnv.js ./
+COPY tests/test.env ./
 COPY tests/playwright ./playwright
 # Only chromium is installed to keep image size/build time reasonable —
 # playwrightRunner.service.js pins PROJECT='chromium' to match.
