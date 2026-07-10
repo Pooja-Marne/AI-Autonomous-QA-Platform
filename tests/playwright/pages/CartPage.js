@@ -1,12 +1,14 @@
+const { resolve } = require('../locators/resolve');
+
 class CartPage {
   constructor(page) {
     this.page = page;
-    this.title = page.locator('[data-test="title"]');
+    this.title = page.locator(resolve('CartPage.title', '[data-test="title"]'));
     // SauceDemo uses data-test="inventory-item" (NOT "cart-item") for cart items
-    this.cartItems = page.locator('[data-test="inventory-item"]');
-    this.continueShoppingBtn = page.locator('[data-test="continue-shopping"]');
-    this.checkoutBtn = page.locator('[data-test="checkout"]');
-    this.cartList = page.locator('[data-test="cart-list"]');
+    this.cartItems = page.locator(resolve('CartPage.cartItems', '[data-test="inventory-item"]'));
+    this.continueShoppingBtn = page.locator(resolve('CartPage.continueShoppingBtn', '[data-test="continue-shopping"]'));
+    this.checkoutBtn = page.locator(resolve('CartPage.checkoutBtn', '[data-test="checkout"]'));
+    this.cartList = page.locator(resolve('CartPage.cartList', '[data-test="cart-list"]'));
   }
 
   async isOnCartPage() {

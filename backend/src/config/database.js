@@ -112,6 +112,37 @@ function initializeSchema(db) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Centralized Locator Repository — the single source of truth for every
+    -- healed locator, across ALL execution paths (terminal, dashboard, Jira
+    -- trigger, scheduler). One row per healing event; page_object+property
+    -- can have many rows over time (version = row count for that pair), so
+    -- history/versioning falls out of the schema for free. The most recent
+    -- non-rejected row for a page_object+property is "active" and is what
+    -- gets synced into the runtime JSON cache every Page Object reads from —
+    -- see backend/src/services/locatorRepository.service.js.
+    CREATE TABLE IF NOT EXISTS locator_repository (
+      id TEXT PRIMARY KEY,
+      page_object TEXT NOT NULL,
+      property_name TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1,
+      original_locator TEXT NOT NULL,
+      healed_locator TEXT NOT NULL,
+      confidence_score REAL,
+      healing_reason TEXT,
+      test_name TEXT,
+      module TEXT,
+      run_id TEXT,
+      demo_healing_run_id TEXT,
+      live_verified INTEGER DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending_approval', -- pending_approval | approved | rejected | superseded
+      git_status TEXT DEFAULT 'not_started',            -- not_started | committed | pr_open | pr_merged | failed
+      git_commit_sha TEXT,
+      git_pr_url TEXT,
+      approved_at DATETIME,
+      approved_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Jira Issues Cache
     CREATE TABLE IF NOT EXISTS jira_issues (
       id TEXT PRIMARY KEY,

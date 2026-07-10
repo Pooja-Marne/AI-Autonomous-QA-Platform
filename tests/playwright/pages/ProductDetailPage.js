@@ -1,15 +1,17 @@
+const { resolve } = require('../locators/resolve');
+
 class ProductDetailPage {
   constructor(page) {
     this.page = page;
-    this.productName = page.locator('[data-test="inventory-item-name"]');
-    this.productDesc = page.locator('[data-test="inventory-item-desc"]');
-    this.productPrice = page.locator('[data-test="inventory-item-price"]');
-    this.productImage = page.locator('[data-test="item-sauce-img"]');
-    this.addToCartBtn = page.locator('[data-test^="add-to-cart"]');
-    this.removeBtn = page.locator('[data-test^="remove"]');
-    this.backButton = page.locator('[data-test="back-to-products"]');
-    this.shoppingCartLink = page.locator('[data-test="shopping-cart-link"]');
-    this.cartBadge = page.locator('[data-test="shopping-cart-badge"]');
+    this.productName = page.locator(resolve('ProductDetailPage.productName', '[data-test="inventory-item-name"]'));
+    this.productDesc = page.locator(resolve('ProductDetailPage.productDesc', '[data-test="inventory-item-desc"]'));
+    this.productPrice = page.locator(resolve('ProductDetailPage.productPrice', '[data-test="inventory-item-price"]'));
+    this.productImage = page.locator(resolve('ProductDetailPage.productImage', '[data-test="item-sauce-img"]'));
+    this.addToCartBtn = page.locator(resolve('ProductDetailPage.addToCartBtn', '[data-test^="add-to-cart"]'));
+    this.removeBtn = page.locator(resolve('ProductDetailPage.removeBtn', '[data-test^="remove"]'));
+    this.backButton = page.locator(resolve('ProductDetailPage.backButton', '[data-test="back-to-products"]'));
+    this.shoppingCartLink = page.locator(resolve('ProductDetailPage.shoppingCartLink', '[data-test="shopping-cart-link"]'));
+    this.cartBadge = page.locator(resolve('ProductDetailPage.cartBadge', '[data-test="shopping-cart-badge"]'));
   }
 
   async getName() {

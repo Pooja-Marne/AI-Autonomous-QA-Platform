@@ -6,6 +6,7 @@ import { useSuiteExecutionHistory } from '../../hooks/useSuiteExecutionHistory';
 import { demoHealingApi } from '../../services/api';
 import HealingRunView from '../../components/healing/HealingRunView';
 import SuiteExecutionDetail from '../../components/healing/SuiteExecutionDetail';
+import LocatorRepositoryPanel from '../../components/healing/LocatorRepositoryPanel';
 
 const SUITES = [
   { key: 'smoke', label: 'Smoke' },
@@ -88,6 +89,8 @@ export default function LiveHealingView() {
           {resetMessage.text}
         </p>
       )}
+
+      {state.phase === 'idle' && <LocatorRepositoryPanel />}
 
       {state.phase !== 'idle' ? (
         <>

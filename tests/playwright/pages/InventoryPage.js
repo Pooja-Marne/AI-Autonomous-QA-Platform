@@ -1,18 +1,20 @@
+const { resolve } = require('../locators/resolve');
+
 class InventoryPage {
   constructor(page) {
     this.page = page;
-    this.title = page.locator('[data-test="title"]');
-    this.inventoryContainer = page.locator('[data-test="inventory-container"]');
-    this.inventoryItems = page.locator('[data-test="inventory-item"]');
-    this.sortDropdown = page.locator('[data-test="product-sort-container"]');
-    this.shoppingCartBadge = page.locator('[data-test="shopping-cart-badge"]');
-    this.shoppingCartLink = page.locator('[data-test="shopping-cart-link"]');
-    this.menuButton = page.locator('#react-burger-menu-btn');
-    this.logoutLink = page.locator('[data-test="logout-sidebar-link"]');
-    this.allItemsLink = page.locator('[data-test="inventory-sidebar-link"]');
-    this.aboutLink = page.locator('[data-test="about-sidebar-link"]');
-    this.resetLink = page.locator('[data-test="reset-sidebar-link"]');
-    this.menuClose = page.locator('#react-burger-cross-btn');
+    this.title = page.locator(resolve('InventoryPage.title', '[data-test="title"]'));
+    this.inventoryContainer = page.locator(resolve('InventoryPage.inventoryContainer', '[data-test="inventory-container"]'));
+    this.inventoryItems = page.locator(resolve('InventoryPage.inventoryItems', '[data-test="inventory-item"]'));
+    this.sortDropdown = page.locator(resolve('InventoryPage.sortDropdown', '[data-test="product-sort-container"]'));
+    this.shoppingCartBadge = page.locator(resolve('InventoryPage.shoppingCartBadge', '[data-test="shopping-cart-badge"]'));
+    this.shoppingCartLink = page.locator(resolve('InventoryPage.shoppingCartLink', '[data-test="shopping-cart-link"]'));
+    this.menuButton = page.locator(resolve('InventoryPage.menuButton', '#react-burger-menu-btn'));
+    this.logoutLink = page.locator(resolve('InventoryPage.logoutLink', '[data-test="logout-sidebar-link"]'));
+    this.allItemsLink = page.locator(resolve('InventoryPage.allItemsLink', '[data-test="inventory-sidebar-link"]'));
+    this.aboutLink = page.locator(resolve('InventoryPage.aboutLink', '[data-test="about-sidebar-link"]'));
+    this.resetLink = page.locator(resolve('InventoryPage.resetLink', '[data-test="reset-sidebar-link"]'));
+    this.menuClose = page.locator(resolve('InventoryPage.menuClose', '#react-burger-cross-btn'));
   }
 
   async isOnInventoryPage() {

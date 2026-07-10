@@ -99,21 +99,19 @@ function extractSelectorFromMessage(message) {
   return match ? match[1] : null;
 }
 
-// Finds which Page Object file/property currently hard-codes a selector
-// string, and rewrites it in place — this IS the "centralized locator
-// repository" update: the fix lands in real source, so the next run (from
-// the terminal or the agent) uses the healed selector for real, not just an
-// in-memory override.
-function patchPageObjectSource(oldSelector, newSelector) {
+// Finds which Page Object class/property currently defaults to a selector
+// string. Every Page Object now wraps its locators in
+// resolve('ClassName.property', 'default-selector') (see
+// tests/playwright/locators/resolve.js), so identifying the owner is a
+// simple, reliable text match on that call shape — no fragile per-locator
+// registration needed for this to work generically.
+function findPageObjectPropertyForSelector(oldSelector) {
   const files = fs.readdirSync(PAGES_DIR).filter((f) => f.endsWith('.js'));
+  const escaped = oldSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   for (const file of files) {
-    const filePath = path.join(PAGES_DIR, file);
-    const content = fs.readFileSync(filePath, 'utf-8');
-    if (!content.includes(oldSelector)) continue;
-    const propMatch = content.match(new RegExp(`this\\.(\\w+)\\s*=\\s*page\\.locator\\(['"\`]${oldSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"\`]\\)`));
-    const updated = content.split(oldSelector).join(newSelector);
-    fs.writeFileSync(filePath, updated);
-    return { file, className: file.replace('.js', ''), propertyName: propMatch?.[1] || null };
+    const content = fs.readFileSync(path.join(PAGES_DIR, file), 'utf-8');
+    const match = content.match(new RegExp(`resolve\\(\\s*['"\`](\\w+)\\.(\\w+)['"\`]\\s*,\\s*['"\`]${escaped}['"\`]\\s*\\)`));
+    if (match) return { file, className: match[1], propertyName: match[2] };
   }
   return null;
 }
@@ -446,6 +444,16 @@ async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, 
         // non-working override in place.
         demoConfig[locatorKey].healed = null;
         saveLocatorConfig(demoConfig);
+      } else {
+        // Also record in the Centralized Locator Repository, same as the
+        // generalized path — one dashboard, one history/approval flow, for
+        // every healed locator regardless of which detection tier found it.
+        const [pageObject, propertyName] = locatorKey.split('.');
+        require('./locatorRepository.service').recordHealedLocator({
+          pageObject, propertyName, originalLocator: oldLocator, healedLocator: analysis.suggestedLocator,
+          confidenceScore: analysis.confidence, healingReason: analysis.rootCause,
+          testFile, module: null, runId, liveVerified: true,
+        });
       }
     } else {
       log('Could not verify a working replacement live. Flagging for manual review with the best AI suggestion attached.');
@@ -480,9 +488,12 @@ const MODULE_SPEC_ARG = {
 // not just the 2 locators pre-registered in demoLocators.json. This is what
 // makes "the AI Agent is not actually healing" no longer true for arbitrary
 // breakages — same real browser, real DOM capture, real AI analysis, real
-// live verification, real retry as the demo-locator path, but the fix is
-// written directly into the Page Object source file that owns the selector
-// (the actual "centralized locator repository"), not an in-memory override.
+// live verification, real retry as the demo-locator path. The fix is
+// recorded in the Centralized Locator Repository (SQLite, versioned,
+// visible on the dashboard) and synced to the runtime cache every Page
+// Object reads — NOT written directly into source, so it can never diverge
+// silently from what's in git. A human approves it via the dashboard before
+// it becomes a real commit/PR (see gitIntegration.service.js).
 async function runGenericHealingCycle({ module, testFile = null, runId = null, failedTestNames = [], errorMessage }) {
   const oldLocator = extractSelectorFromMessage(errorMessage);
   if (!oldLocator) return null; // nothing DOM-addressable to heal (assertion/timeout/network failure, not a locator)
@@ -556,24 +567,39 @@ async function runGenericHealingCycle({ module, testFile = null, runId = null, f
 
     let retryStatus = 'skipped';
     let healingStatus = 'not_fixable';
-    let patched = null;
+    let owner = null;
+    let repositoryEntry = null;
+    const { recordHealedLocator, rejectLocator } = require('./locatorRepository.service');
 
     if (liveVerified) {
-      patched = patchPageObjectSource(oldLocator, analysis.suggestedLocator);
-      if (!patched) {
-        log(`Found a live-verified replacement, but "${oldLocator}" isn't hard-coded in any Page Object file — cannot persist the fix. Flagging for manual review.`);
+      owner = findPageObjectPropertyForSelector(oldLocator);
+      if (!owner) {
+        log(`Found a live-verified replacement, but "${oldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`);
       } else {
-        log(`Applied AI-generated locator to ${patched.file} (this.${patched.propertyName || '?'}) and retrying the real spec file...`, 'retrying');
+        // Record BEFORE retrying — this writes the fix into the Centralized
+        // Locator Repository's runtime cache (resolved-locators.json), which
+        // is what the retry's fresh Page Object construction actually reads.
+        // Source code (the .js file) is untouched here — that only happens
+        // if/when a human approves this via the dashboard (Git integration).
+        repositoryEntry = recordHealedLocator({
+          pageObject: owner.className, propertyName: owner.propertyName,
+          originalLocator: oldLocator, healedLocator: analysis.suggestedLocator,
+          confidenceScore: analysis.confidence, healingReason: analysis.rootCause,
+          testFile, module, runId, liveVerified: true,
+        });
+        log(`Stored in Locator Repository as ${owner.className}.${owner.propertyName} (v${repositoryEntry.version}, pending approval) and retrying the real spec file...`, 'retrying');
+
         const retry = await retrySpecFile(specArg);
         retryStatus = retry.passed ? 'passed' : 'failed';
         healingStatus = retry.passed ? 'healed' : 'not_fixable';
         log(`Retry result: ${retryStatus.toUpperCase()} (${retry.passedCount}/${retry.totalCount} tests passing)`);
 
         if (!retry.passed) {
-          // The fix didn't actually make the test pass — revert the source
-          // change rather than leave a non-working selector in place.
-          patchPageObjectSource(analysis.suggestedLocator, oldLocator);
-          log('Retry failed — reverted the source file change.');
+          // The fix didn't actually validate against the real retry — pull
+          // it out of rotation immediately so no subsequent run keeps
+          // resolving to a locator that doesn't actually work.
+          rejectLocator(repositoryEntry.id);
+          log('Retry failed — rejected the repository entry; runtime resolution reverts to the Page Object default.');
         }
       }
     } else {
@@ -582,13 +608,13 @@ async function runGenericHealingCycle({ module, testFile = null, runId = null, f
 
     const timeTakenMs = Date.now() - startedAt;
     const resolverTag = { native: '[Native]', openai: '[OpenAI]', claude: '[Claude]', none: '[Failed]' }[analysis.resolvedBy] || '';
-    const locatorKey = patched ? `${patched.className}.${patched.propertyName || '?'}` : oldLocator;
+    const locatorKey = owner ? `${owner.className}.${owner.propertyName}` : oldLocator;
     record = {
       id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
       oldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
       confidenceScore: analysis.confidence, liveVerified, healingStatus, retryStatus,
       screenshotPath, tracePath, domSnapshotPath, timeTakenMs, logs,
-      codeSnippet: healingStatus === 'healed' && patched ? buildCodeSnippet(locatorKey, patched.propertyName, analysis.suggestedLocator) : null,
+      codeSnippet: healingStatus === 'healed' && owner ? buildCodeSnippet(locatorKey, owner.propertyName, analysis.suggestedLocator) : null,
     };
     persistDemoHealingRun(record);
     log(`Healing cycle complete in ${timeTakenMs}ms — status: ${healingStatus.toUpperCase()}`, 'done');

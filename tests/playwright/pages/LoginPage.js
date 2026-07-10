@@ -1,17 +1,17 @@
-const { resolve } = require('../demo/locatorResolver');
+const { resolve } = require('../locators/resolve');
 
 class LoginPage {
   constructor(page) {
     this.page = page;
-    this.usernameInput = page.locator('[data-test="broken_username"]');
-    this.passwordInput = page.locator('[data-test="password"]');
+    this.usernameInput = page.locator(resolve('LoginPage.usernameInput', '[data-test="broken_username"]'));
+    this.passwordInput = page.locator(resolve('LoginPage.passwordInput', '[data-test="password"]'));
     // loginButton is DEMO_MODE-controlled (see tests/playwright/demo/) —
     // intentionally broken while DEMO_MODE=true to give the AI Healing Agent
     // something real to detect and fix during live demos.
-    this.loginButton = page.locator(resolve('LoginPage.loginButton'));
-    this.errorMessage = page.locator('[data-test="error"]');
-    this.errorIcon = page.locator('.error_icon');
-    this.loginLogo = page.locator('.login_logo');
+    this.loginButton = page.locator(resolve('LoginPage.loginButton', '[data-test="login-button"]'));
+    this.errorMessage = page.locator(resolve('LoginPage.errorMessage', '[data-test="error"]'));
+    this.errorIcon = page.locator(resolve('LoginPage.errorIcon', '.error_icon'));
+    this.loginLogo = page.locator(resolve('LoginPage.loginLogo', '.login_logo'));
   }
 
   async goto() {

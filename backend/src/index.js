@@ -19,6 +19,7 @@ const schedulerRoutes = require('./routes/scheduler.routes');
 const triggersRoutes = require('./routes/triggers.routes');
 const coverageRoutes = require('./routes/coverage.routes');
 const demoHealingRoutes = require('./routes/demoHealing.routes');
+const locatorsRoutes = require('./routes/locators.routes');
 
 const app = express();
 
@@ -67,6 +68,7 @@ app.use('/api/scheduler', schedulerRoutes);
 app.use('/api/triggers', triggersRoutes);
 app.use('/api/coverage', coverageRoutes);
 app.use('/api/demo-healing', demoHealingRoutes);
+app.use('/api/locators', locatorsRoutes);
 app.use('/demo-artifacts', express.static(path.join(__dirname, '..', 'data', 'demo-artifacts')));
 
 // Production deployment serves the built React app from this same process

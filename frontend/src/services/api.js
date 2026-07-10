@@ -83,4 +83,10 @@ export const demoHealingApi = {
   reset: () => api.post('/demo-healing/reset'),
 };
 
+export const locatorsApi = {
+  getAll: () => api.get('/locators'),
+  approve: (id, body) => api.post(`/locators/${id}/approve`, body),
+  reject: (id) => api.post(`/locators/${id}/reject`),
+};
+
 export default api;
