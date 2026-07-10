@@ -326,23 +326,36 @@ async function runAndProcess(runId, suite, runName, trigger) {
     }
 
     if (remainingFailedCases.length > 0) {
+      // Grouped by the broken selector ALONE, not selector+module: the same
+      // broken locator (e.g. a shared login-flow field) surfaces across
+      // every module whose tests log in first, and it's the exact same
+      // underlying fix — healing it once per module wastes cycles and, worse,
+      // can produce wrong fixes, since most modules' reproduce() steps
+      // hard-code a working login just to get past it, landing the DOM
+      // capture on a page where the broken element doesn't even belong.
       const byGenericSelector = new Map();
       const noSelector = [];
       for (const fc of remainingFailedCases) {
         const selector = extractSelectorFromMessage(fc.errorMessage);
         if (!selector) { noSelector.push(fc); continue; }
-        const key = `${fc.module}::${selector}`;
-        if (!byGenericSelector.has(key)) byGenericSelector.set(key, []);
-        byGenericSelector.get(key).push(fc);
+        if (!byGenericSelector.has(selector)) byGenericSelector.set(selector, []);
+        byGenericSelector.get(selector).push(fc);
       }
 
       for (const [key, cases] of byGenericSelector) {
-        console.log(`[Playwright Runner] Routing unrecognized broken selector "${key}" to the generalized self-healing agent...`);
+        // When the same broken selector spans several modules, prefer 'auth'
+        // to reproduce it: its steps just load the page and don't hard-code
+        // a working login first (every other module's reproduce does, to
+        // get past that step) — so it's the one guaranteed to actually
+        // capture the DOM at the point the real failure occurs, instead of
+        // analyzing a page the broken element was never on.
+        const reproduceCase = cases.find((c) => c.module === 'auth') || cases[0];
+        console.log(`[Playwright Runner] Routing unrecognized broken selector "${key}" (seen in ${[...new Set(cases.map((c) => c.module))].join(', ')}) to the generalized self-healing agent, reproducing via "${reproduceCase.module}"...`);
         db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
         const result = await withTimeout(
           runGenericHealingCycle({
-            module: cases[0].module, runId, testFile: cases[0].filePath,
-            failedTestNames: cases.map((c) => c.name), errorMessage: cases[0].errorMessage,
+            module: reproduceCase.module, runId, testFile: reproduceCase.filePath,
+            failedTestNames: cases.map((c) => c.name), errorMessage: reproduceCase.errorMessage,
           }),
           HEALING_CYCLE_TIMEOUT_MS,
           `Generalized self-healing cycle for ${key}`
