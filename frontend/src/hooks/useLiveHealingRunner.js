@@ -3,7 +3,7 @@ import { runsApi } from '../services/api';
 
 const POLL_MS = 1500;
 
-const MODULE_LABELS = { auth: 'Login', cart: 'Cart', checkout: 'Checkout', inventory: 'Inventory', e2e: 'End to End' };
+const MODULE_LABELS = { auth: 'Login / Logout', dashboard: 'Dashboard', navigation: 'Navigation', orders: 'Orders', products: 'Products', users: 'Users' };
 
 const initialState = {
   phase: 'idle',

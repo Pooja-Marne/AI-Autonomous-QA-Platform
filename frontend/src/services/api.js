@@ -76,13 +76,6 @@ export const coverageApi = {
   getSprintSummary: (params) => api.get('/coverage/sprint-summary', { params }),
 };
 
-export const demoHealingApi = {
-  getStatus: () => api.get('/demo-healing/status'),
-  getRuns: (params) => api.get('/demo-healing/runs', { params }),
-  getLocators: () => api.get('/demo-healing/locators'),
-  reset: () => api.post('/demo-healing/reset'),
-};
-
 export const locatorsApi = {
   getAll: () => api.get('/locators'),
   approve: (id, body) => api.post(`/locators/${id}/approve`, body),

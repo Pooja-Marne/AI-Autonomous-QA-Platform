@@ -1,12 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const { healTestCase, getHealingStats, classifyFailure } = require('../services/aiHealing.service');
-const { runRealHealingCycle, findBrokenLocatorInMessage } = require('../services/demoHealingAgent.service');
+const { runGenericHealingCycle, extractSelectorFromMessage } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 const config = require('../config/config');
 const { withTimeout } = require('../utils/withTimeout');
 
 const jiraUrl = (key) => key ? `${config.jira.baseUrl}/browse/${key}` : null;
+
+function guessModule(filePath) {
+  const f = (filePath || '').toLowerCase();
+  if (f.includes('dashboard')) return 'dashboard';
+  if (f.includes('navigation')) return 'navigation';
+  if (f.includes('orders')) return 'orders';
+  if (f.includes('products')) return 'products';
+  if (f.includes('users')) return 'users';
+  return 'auth';
+}
 
 // A synchronous HTTP request can't be allowed to hang as long as a
 // background job can — cap it well under typical proxy/browser timeouts.
@@ -21,18 +31,19 @@ router.post('/analyze', async (req, res) => {
     const { name, errorMessage, stackTrace, filePath } = req.body;
     if (!errorMessage) return res.status(400).json({ success: false, error: 'errorMessage is required' });
 
-    // If the error message contains a locator we can actually recognize and
-    // fix, run the real pipeline (live DOM, real AI, real retry) instead of
+    // If the error message contains a selector we can actually address,
+    // run the real pipeline (live DOM, real AI, real retry) instead of
     // just producing a text diagnosis — "Fix with AI" should try to really
     // fix it whenever that's possible.
-    const match = findBrokenLocatorInMessage(errorMessage);
-    if (match) {
+    const brokenSelector = extractSelectorFromMessage(errorMessage);
+    if (brokenSelector) {
+      const module = guessModule(filePath);
       const result = await withTimeout(
-        runRealHealingCycle({
-          locatorKey: match.locatorKey, testFile: filePath, failedTestNames: name ? [name] : [],
+        runGenericHealingCycle({
+          module, testFile: filePath, failedTestNames: name ? [name] : [], errorMessage,
         }),
         ANALYZE_TIMEOUT_MS,
-        `Fix with AI for ${match.locatorKey}`
+        `Fix with AI for ${brokenSelector}`
       ).catch((err) => {
         console.error('[Healing] real fix cycle failed or timed out:', err.message);
         return { timedOut: true, error: err.message };

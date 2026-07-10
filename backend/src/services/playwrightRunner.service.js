@@ -4,9 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { getDatabase } = require('../config/database');
 const { healMultipleTestCases } = require('./aiHealing.service');
-const {
-  runRealHealingCycle, runGenericHealingCycle, findBrokenLocatorInMessage, extractSelectorFromMessage,
-} = require('./demoHealingAgent.service');
+const { runGenericHealingCycle, extractSelectorFromMessage } = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 const { withTimeout } = require('../utils/withTimeout');
@@ -25,26 +23,34 @@ const TESTS_DIR = path.resolve(__dirname, '../../../tests');
 // actually installs there.
 const PROJECT = 'chromium';
 
+// All tests run against the AI Healing Demo Site (a disposable static app
+// deployed separately — see tests/test.env's BASE_URL). full_regression and
+// regression both run everything; smoke runs a fast representative subset
+// tagged @smoke across every module.
 const SUITE_PATTERNS = {
   full_regression: [],
+  regression: [],
   smoke: ['--grep', '@smoke'],
-  regression: ['--grep', '@regression'],
-  login: ['specs/auth/'],
-  cart: ['specs/cart/'],
-  checkout: ['specs/checkout/'],
-  inventory: ['specs/inventory/'],
-  e2e: ['specs/e2e/'],
+  auth: ['specs/auth.spec.js'],
+  dashboard: ['specs/dashboard.spec.js'],
+  navigation: ['specs/navigation.spec.js'],
+  orders: ['specs/orders.spec.js'],
+  products: ['specs/products.spec.js'],
+  users: ['specs/users.spec.js'],
 };
 
+const ALL_MODULES = ['auth', 'dashboard', 'navigation', 'orders', 'products', 'users'];
+
 const SUITE_MODULES = {
-  full_regression: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
-  smoke: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
-  regression: ['auth', 'cart', 'checkout', 'inventory', 'e2e'],
-  login: ['auth'],
-  cart: ['cart'],
-  checkout: ['checkout'],
-  inventory: ['inventory'],
-  e2e: ['e2e'],
+  full_regression: ALL_MODULES,
+  regression: ALL_MODULES,
+  smoke: ALL_MODULES,
+  auth: ['auth'],
+  dashboard: ['dashboard'],
+  navigation: ['navigation'],
+  orders: ['orders'],
+  products: ['products'],
+  users: ['users'],
 };
 
 // In-progress runs, keyed by runId — this is what makes the UI genuinely
@@ -173,15 +179,18 @@ function mapPlaywrightResults(pwResults) {
 
 function deriveModule(filePath, title) {
   const f = (filePath || '').toLowerCase();
-  if (f.includes('auth') || f.includes('login')) return 'auth';
-  if (f.includes('cart')) return 'cart';
-  if (f.includes('checkout')) return 'checkout';
-  if (f.includes('inventory') || f.includes('product')) return 'inventory';
-  if (f.includes('e2e')) return 'e2e';
+  if (f.includes('auth')) return 'auth';
+  if (f.includes('dashboard')) return 'dashboard';
+  if (f.includes('navigation')) return 'navigation';
+  if (f.includes('orders')) return 'orders';
+  if (f.includes('products')) return 'products';
+  if (f.includes('users')) return 'users';
   const t = (title || '').toLowerCase();
-  if (t.includes('login') || t.includes('auth')) return 'auth';
-  if (t.includes('cart')) return 'cart';
-  if (t.includes('checkout')) return 'checkout';
+  if (t.includes('login') || t.includes('logout')) return 'auth';
+  if (t.includes('dashboard')) return 'dashboard';
+  if (t.includes('order')) return 'orders';
+  if (t.includes('product')) return 'products';
+  if (t.includes('user')) return 'users';
   return 'ui';
 }
 
@@ -279,51 +288,16 @@ async function runAndProcess(runId, suite, runName, trigger) {
     }
 
     // AI Healing for failures, tiered by what's actually verifiable:
-    //  1. A known, pre-registered demo locator (LoginPage.loginButton etc.) —
-    //     the demo-repeatable cycle (in-memory override, not source-patched).
-    //  2. ANY other selector Playwright reported as unresolvable — the
-    //     generalized real cycle: live DOM capture, real AI analysis, live
-    //     verification, and a real retry, with the fix written directly into
-    //     the Page Object source file that owns it.
-    //  3. Failures with no locator at all (assertion/timeout/network) — no
+    //  1. Any selector Playwright reported as unresolvable — the real
+    //     self-healing cycle: live DOM capture, real AI analysis, live
+    //     verification, and a real retry, with the fix recorded in the
+    //     Centralized Locator Repository (never written directly into
+    //     source — see demoHealingAgent.service.js).
+    //  2. Failures with no locator at all (assertion/timeout/network) — no
     //     DOM-based fix is possible; these are diagnosed (real OpenAI call)
     //     but never silently marked "healed" — see aiHealing.service.js.
     let healed = 0, notFixable = 0;
     let remainingFailedCases = failedCases;
-
-    if (failedCases.length > 0) {
-      const byLocator = new Map();
-      for (const fc of failedCases) {
-        const match = findBrokenLocatorInMessage(fc.errorMessage);
-        if (!match) continue;
-        if (!byLocator.has(match.locatorKey)) byLocator.set(match.locatorKey, []);
-        byLocator.get(match.locatorKey).push(fc);
-      }
-
-      for (const [locatorKey, cases] of byLocator) {
-        console.log(`[Playwright Runner] Routing locator "${locatorKey}" to the real self-healing agent...`);
-        db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
-        const result = await withTimeout(
-          runRealHealingCycle({
-            locatorKey, runId, testFile: cases[0].filePath, failedTestNames: cases.map((c) => c.name),
-          }),
-          HEALING_CYCLE_TIMEOUT_MS,
-          `Self-healing cycle for ${locatorKey}`
-        ).catch((err) => {
-          console.error(`[Playwright Runner] Self-healing cycle failed or timed out:`, err.message);
-          return null;
-        });
-
-        const isHealed = result?.healingStatus === 'healed';
-        for (const c of cases) {
-          if (isHealed) { healed++; failed--; }
-          else notFixable++;
-          db.prepare(`UPDATE test_cases SET healing_status=?, status=? WHERE id=?`)
-            .run(isHealed ? 'healed' : 'not_fixable', isHealed ? 'healed' : 'failed', c.id);
-        }
-        remainingFailedCases = remainingFailedCases.filter((fc) => !cases.includes(fc));
-      }
-    }
 
     if (remainingFailedCases.length > 0) {
       // Grouped by the broken selector ALONE, not selector+module: the same

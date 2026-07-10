@@ -19,80 +19,60 @@ try {
 }
 
 const PAGES_DIR = path.join(TESTS_DIR, 'playwright', 'pages');
-const LOCATORS_PATH = path.join(TESTS_DIR, 'playwright', 'demo', 'demoLocators.json');
 const ARTIFACTS_DIR = path.join(__dirname, '..', '..', 'data', 'demo-artifacts');
 // Single source of truth (tests/test.env) shared with playwright.config.js —
 // this is what "direct terminal execution" and "AI Agent execution" both
 // resolve to now, instead of two independently hardcoded copies of the URL.
-const BASE_URL = process.env.BASE_URL || 'https://www.saucedemo.com';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
 const anthropic = config.anthropic.apiKey ? new Anthropic({ apiKey: config.anthropic.apiKey }) : null;
 
-// Real (not simulated) reproduction steps + metadata for every locator that
-// can be intentionally broken via tests/playwright/demo/demoLocators.json.
-// Detection is keyed off the actual broken selector STRING (see
-// findBrokenLocatorInMessage below), not which spec file failed — a shared
-// page object like LoginPage is exercised by many suites, not just its own.
-const LOCATOR_TARGETS = {
-  'LoginPage.loginButton': {
-    propertyName: 'loginButton',
-    specArg: 'specs/auth/',
-    elementDescription: 'the Login submit button on the SauceDemo login page',
-    reproduce: async (page) => {
-      await page.goto(BASE_URL);
-    },
+// Real reproduction steps for the AI Healing Demo Site, keyed by test
+// module (not by a specific known-broken locator) — this is what lets
+// healing generalize to ANY selector failure the module's tests can hit,
+// not just one pre-registered target. Every step beyond "auth" logs in
+// with the site's real (unresolved) login selectors first, then navigates
+// to the module's own page.
+const MODULE_REPRODUCE = {
+  auth: async (page) => { await page.goto(`${BASE_URL}/login.html`); },
+  dashboard: async (page) => {
+    await page.goto(`${BASE_URL}/login.html`);
+    await page.locator('[data-test="username-input"]').fill('admin');
+    await page.locator('[data-test="password-input"]').fill('admin123');
+    await page.locator('[data-test="login-button"]').click();
+    await page.waitForURL('**/dashboard.html');
   },
-  'CheckoutPage.firstNameInput': {
-    propertyName: 'firstNameInput',
-    specArg: 'specs/checkout/',
-    elementDescription: 'the First Name input field on the SauceDemo checkout step-one form',
-    reproduce: async (page) => {
-      await page.goto(BASE_URL);
-      await page.locator('[data-test="username"]').fill('standard_user');
-      await page.locator('[data-test="password"]').fill('secret_sauce');
-      await page.locator('[data-test="login-button"]').click();
-      await page.locator('[data-test="add-to-cart-sauce-labs-backpack"]').click();
-      await page.locator('.shopping_cart_link').click();
-      await page.locator('[data-test="checkout"]').click();
-    },
+  navigation: async (page) => {
+    await MODULE_REPRODUCE.dashboard(page);
+  },
+  products: async (page) => {
+    await MODULE_REPRODUCE.dashboard(page);
+    await page.goto(`${BASE_URL}/products.html`);
+  },
+  users: async (page) => {
+    await MODULE_REPRODUCE.dashboard(page);
+    await page.goto(`${BASE_URL}/users.html`);
+  },
+  orders: async (page) => {
+    await MODULE_REPRODUCE.dashboard(page);
+    await page.goto(`${BASE_URL}/orders.html`);
   },
 };
 
-// Real reproduction steps keyed by test MODULE (not by a specific known-
-// broken locator) — this is what makes healing generalize to ANY selector
-// failure, not just the 2 intentionally-broken demo locators above. Reuses
-// the same live-navigation approach, just indexed more broadly.
-const MODULE_REPRODUCE = {
-  auth: async (page) => { await page.goto(BASE_URL); },
-  inventory: async (page) => {
-    await page.goto(BASE_URL);
-    await page.locator('[data-test="username"]').fill('standard_user');
-    await page.locator('[data-test="password"]').fill('secret_sauce');
-    await page.locator('[data-test="login-button"]').click();
-  },
-  cart: async (page) => {
-    await MODULE_REPRODUCE.inventory(page);
-    await page.locator('[data-test="add-to-cart-sauce-labs-backpack"]').click();
-    await page.locator('.shopping_cart_link').click();
-  },
-  checkout: async (page) => {
-    await MODULE_REPRODUCE.cart(page);
-    await page.locator('[data-test="checkout"]').click();
-  },
-  e2e: async (page) => {
-    await MODULE_REPRODUCE.checkout(page);
-    await page.locator('[data-test="firstName"]').fill('Test');
-    await page.locator('[data-test="lastName"]').fill('User');
-    await page.locator('[data-test="postalCode"]').fill('12345');
-    await page.locator('[data-test="continue"]').click();
-  },
+const MODULE_SPEC_ARG = {
+  auth: 'specs/auth.spec.js',
+  dashboard: 'specs/dashboard.spec.js',
+  navigation: 'specs/navigation.spec.js',
+  orders: 'specs/orders.spec.js',
+  products: 'specs/products.spec.js',
+  users: 'specs/users.spec.js',
 };
 
 // Extracts the raw selector Playwright reported as unresolvable from a
-// failure's error message — works for ANY broken locator, not just the 2
-// registered in demoLocators.json. Playwright renders this consistently as
-// locator('...') in both the short error and the "waiting for" log line.
+// failure's error message — works for ANY broken locator. Playwright
+// renders this consistently as locator('...') in both the short error and
+// the "waiting for" log line.
 function extractSelectorFromMessage(message) {
   if (!message) return null;
   const match = message.match(/locator\(\s*['"](.+?)['"]\s*\)/);
@@ -100,10 +80,10 @@ function extractSelectorFromMessage(message) {
 }
 
 // Finds which Page Object class/property currently defaults to a selector
-// string. Every Page Object now wraps its locators in
+// string. Every Page Object wraps its locators in
 // resolve('ClassName.property', 'default-selector') (see
 // tests/playwright/locators/resolve.js), so identifying the owner is a
-// simple, reliable text match on that call shape — no fragile per-locator
+// simple, reliable text match on that call shape — no per-locator
 // registration needed for this to work generically.
 function findPageObjectPropertyForSelector(oldSelector) {
   const files = fs.readdirSync(PAGES_DIR).filter((f) => f.endsWith('.js'));
@@ -123,29 +103,6 @@ const activeCycles = new Map();
 
 function getActiveCycle(runId) {
   return runId ? activeCycles.get(runId) || null : null;
-}
-
-function loadLocatorConfig() {
-  return JSON.parse(fs.readFileSync(LOCATORS_PATH, 'utf-8'));
-}
-
-function saveLocatorConfig(cfg) {
-  fs.writeFileSync(LOCATORS_PATH, JSON.stringify(cfg, null, 2));
-}
-
-// Finds a registered broken locator by checking whether its exact selector
-// string appears in the failure text — this is how Playwright errors work
-// ("waiting for locator('[data-test=\"broken_login_button\"]')"), so it's a
-// reliable, generic signal regardless of which spec/test surfaced it.
-function findBrokenLocatorInMessage(message) {
-  if (!message) return null;
-  const demoConfig = loadLocatorConfig();
-  for (const [locatorKey, entry] of Object.entries(demoConfig)) {
-    if (entry.broken && message.includes(entry.broken)) {
-      return { locatorKey, oldLocator: entry.broken };
-    }
-  }
-  return null;
 }
 
 function stripForPrompt(html) {
@@ -343,157 +300,16 @@ function buildCodeSnippet(locatorKey, propertyName, locator) {
   return `// ${pageObject}.js\nthis.${propertyName} = page.locator('${locator}');`;
 }
 
-// Runs the full real healing cycle for a recognized broken locator: capture
-// real artifacts from the live app, ask the AI to analyze the real DOM,
-// verify its suggestion against the live page, apply it, and retry the real
-// spec file. On success the fix STAYS applied (demoLocators.json's `healed`
-// field is not reverted) — call resetDemoLocators() to re-arm the bait
-// locators for another demo run.
-async function runRealHealingCycle({ locatorKey, runId = null, testFile = null, failedTestNames = [] }) {
-  const meta = LOCATOR_TARGETS[locatorKey];
-  if (!meta) return null;
-
-  const startedAt = Date.now();
-  const logs = [];
-  if (runId) activeCycles.set(runId, { locatorKey, logs, step: 'starting', startedAt });
-  const log = (message, step) => {
-    logs.push({ ts: Date.now(), message });
-    console.log(`[Self-Healing] ${message}`);
-    const cycle = runId && activeCycles.get(runId);
-    if (cycle && step) cycle.step = step;
-  };
-
-  log(`Detected broken locator "${locatorKey}"${testFile ? ` (surfaced via ${testFile})` : ''}`);
-
-  const demoConfig = loadLocatorConfig();
-  const oldLocator = demoConfig[locatorKey].broken;
-  if (runId) activeCycles.get(runId).oldLocator = oldLocator;
-
-  const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
-  const { chromium } = require(modulePath);
-  // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
-  // can fail to initialize in a container (no user namespaces, tiny /dev/shm)
-  // and either crash or hang indefinitely with no error — a real cause of
-  // runs getting stuck on "Running"/"Healing" in production.
-  const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  const context = await browser.newContext();
-  await context.tracing.start({ screenshots: true, snapshots: true });
-  const page = await context.newPage();
-
-  // Stored/returned paths are relative to ARTIFACTS_DIR (served statically at
-  // /demo-artifacts by index.js) so the frontend can link/embed them directly.
-  const artifactSubdir = `${runId || uuidv4()}-${locatorKey.replace(/\W+/g, '_')}`;
-  const artifactDir = path.join(ARTIFACTS_DIR, artifactSubdir);
-  fs.mkdirSync(artifactDir, { recursive: true });
-  const screenshotPath = `${artifactSubdir}/screenshot.png`;
-  const domSnapshotPath = `${artifactSubdir}/dom.html`;
-  const tracePath = `${artifactSubdir}/trace.zip`;
-  const screenshotAbsPath = path.join(artifactDir, 'screenshot.png');
-  const domSnapshotAbsPath = path.join(artifactDir, 'dom.html');
-  const traceAbsPath = path.join(artifactDir, 'trace.zip');
-
-  let record;
-  try {
-    await meta.reproduce(page);
-    log('Reproduced the failure state live against the real application', 'reproducing');
-
-    await page.screenshot({ path: screenshotAbsPath, fullPage: true });
-    log(`Captured screenshot -> ${screenshotPath}`);
-
-    const domContent = await page.content();
-    fs.writeFileSync(domSnapshotAbsPath, domContent);
-    log(`Captured DOM snapshot -> ${domSnapshotPath}`);
-
-    await context.tracing.stop({ path: traceAbsPath });
-    log(`Saved Playwright trace -> ${tracePath}`);
-
-    log('Analyzing failure and searching for a replacement locator...', 'analyzing');
-    const analysis = await analyzeLocatorFailure({
-      page, elementDescription: meta.elementDescription, oldLocator, domSnapshot: domContent, log,
-    });
-    log(`Root cause (via ${analysis.resolvedBy}): ${analysis.rootCause}`);
-    log(`Suggested locator: ${analysis.suggestedLocator} (confidence ${analysis.confidence}%)`);
-    if (runId) {
-      const cycle = activeCycles.get(runId);
-      if (cycle) Object.assign(cycle, { newLocator: analysis.suggestedLocator, confidence: analysis.confidence, rootCause: analysis.rootCause });
-    }
-
-    let liveVerified = false;
-    if (analysis.suggestedLocator) {
-      log('Validating AI-suggested locator against the live DOM...', 'verifying');
-      const matchCount = await page.locator(analysis.suggestedLocator).count().catch(() => 0);
-      liveVerified = matchCount === 1;
-      log(liveVerified ? 'Live validation passed — selector resolves to exactly 1 element' : `Live validation failed — selector matched ${matchCount} element(s)`);
-    }
-
-    let retryStatus = 'skipped';
-    let healingStatus = 'not_fixable';
-
-    if (liveVerified) {
-      demoConfig[locatorKey].healed = analysis.suggestedLocator;
-      saveLocatorConfig(demoConfig);
-      log('Applied AI-generated locator and retrying the real spec file...', 'retrying');
-
-      const retry = await retrySpecFile(meta.specArg);
-      retryStatus = retry.passed ? 'passed' : 'failed';
-      healingStatus = retry.passed ? 'healed' : 'not_fixable';
-      log(`Retry result: ${retryStatus.toUpperCase()} (${retry.passedCount}/${retry.totalCount} tests passing)`);
-
-      if (!retry.passed) {
-        // The fix didn't actually make the test pass — don't leave a
-        // non-working override in place.
-        demoConfig[locatorKey].healed = null;
-        saveLocatorConfig(demoConfig);
-      } else {
-        // Also record in the Centralized Locator Repository, same as the
-        // generalized path — one dashboard, one history/approval flow, for
-        // every healed locator regardless of which detection tier found it.
-        const [pageObject, propertyName] = locatorKey.split('.');
-        require('./locatorRepository.service').recordHealedLocator({
-          pageObject, propertyName, originalLocator: oldLocator, healedLocator: analysis.suggestedLocator,
-          confidenceScore: analysis.confidence, healingReason: analysis.rootCause,
-          testFile, module: null, runId, liveVerified: true,
-        });
-      }
-    } else {
-      log('Could not verify a working replacement live. Flagging for manual review with the best AI suggestion attached.');
-    }
-
-    const timeTakenMs = Date.now() - startedAt;
-    const resolverTag = { native: '[Native]', openai: '[OpenAI]', claude: '[Claude]', none: '[Failed]' }[analysis.resolvedBy] || '';
-    record = {
-      id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-      oldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
-      confidenceScore: analysis.confidence, liveVerified, healingStatus, retryStatus,
-      screenshotPath, tracePath, domSnapshotPath, timeTakenMs, logs,
-      codeSnippet: healingStatus === 'healed' ? buildCodeSnippet(locatorKey, meta.propertyName, analysis.suggestedLocator) : null,
-    };
-    persistDemoHealingRun(record);
-    log(`Healing cycle complete in ${timeTakenMs}ms — status: ${healingStatus.toUpperCase()}`, 'done');
-  } finally {
-    await browser.close();
-    if (runId) activeCycles.delete(runId);
-  }
-
-  return record;
-}
-
-const MODULE_SPEC_ARG = {
-  auth: 'specs/auth/', cart: 'specs/cart/', checkout: 'specs/checkout/',
-  inventory: 'specs/inventory/', e2e: 'specs/e2e/',
-};
-
-// Generalized counterpart to runRealHealingCycle: handles ANY broken
-// selector (extracted straight from the real Playwright error message),
-// not just the 2 locators pre-registered in demoLocators.json. This is what
-// makes "the AI Agent is not actually healing" no longer true for arbitrary
-// breakages — same real browser, real DOM capture, real AI analysis, real
-// live verification, real retry as the demo-locator path. The fix is
-// recorded in the Centralized Locator Repository (SQLite, versioned,
-// visible on the dashboard) and synced to the runtime cache every Page
-// Object reads — NOT written directly into source, so it can never diverge
-// silently from what's in git. A human approves it via the dashboard before
-// it becomes a real commit/PR (see gitIntegration.service.js).
+// The one real (not simulated) self-healing cycle, for ANY broken selector
+// extracted straight from a real Playwright error message — no pre-
+// registered target needed. Capture real artifacts from the live app, ask
+// the AI to analyze the real DOM, verify its suggestion against the live
+// page, then retry the real spec file. The fix is recorded in the
+// Centralized Locator Repository (SQLite, versioned, visible on the
+// dashboard) and synced to the runtime cache every Page Object reads — NOT
+// written directly into source, so it can never diverge silently from
+// what's in git. A human approves it via the dashboard before it becomes a
+// real commit/PR (see gitIntegration.service.js).
 async function runGenericHealingCycle({ module, testFile = null, runId = null, failedTestNames = [], errorMessage }) {
   const oldLocator = extractSelectorFromMessage(errorMessage);
   if (!oldLocator) return null; // nothing DOM-addressable to heal (assertion/timeout/network failure, not a locator)
@@ -511,15 +327,21 @@ async function runGenericHealingCycle({ module, testFile = null, runId = null, f
     if (cycle && step) cycle.step = step;
   };
 
-  log(`Detected broken locator "${oldLocator}"${testFile ? ` (surfaced via ${testFile})` : ''} — no pre-registered target, running generalized healing`);
+  log(`Detected broken locator "${oldLocator}"${testFile ? ` (surfaced via ${testFile})` : ''} — running self-healing`);
 
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
+  // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
+  // can fail to initialize in a container (no user namespaces, tiny /dev/shm)
+  // and either crash or hang indefinitely with no error — a real cause of
+  // runs getting stuck on "Running"/"Healing" in production.
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   const context = await browser.newContext();
   await context.tracing.start({ screenshots: true, snapshots: true });
   const page = await context.newPage();
 
+  // Stored/returned paths are relative to ARTIFACTS_DIR (served statically at
+  // /demo-artifacts by index.js) so the frontend can link/embed them directly.
   const artifactSubdir = `${runId || uuidv4()}-generic-${Date.now()}`;
   const artifactDir = path.join(ARTIFACTS_DIR, artifactSubdir);
   fs.mkdirSync(artifactDir, { recursive: true });
@@ -626,28 +448,6 @@ async function runGenericHealingCycle({ module, testFile = null, runId = null, f
   return record;
 }
 
-// Clears every locator's `healed` override back to null, re-arming the bait
-// locators (still `broken` while DEMO_MODE=true) for another live demo.
-function resetDemoLocators() {
-  const cfg = loadLocatorConfig();
-  for (const key of Object.keys(cfg)) cfg[key].healed = null;
-  saveLocatorConfig(cfg);
-  return getLocatorsStatus();
-}
-
-// Current state of every registered demo locator, in a shape the UI can
-// render directly (so a reset has something visible to change on screen).
-function getLocatorsStatus() {
-  const cfg = loadLocatorConfig();
-  return Object.entries(cfg).map(([locatorKey, entry]) => ({
-    locatorKey,
-    working: entry.working,
-    broken: entry.broken,
-    healed: entry.healed,
-    state: entry.healed ? 'healed' : (config.demoMode ? 'broken' : 'working'),
-  }));
-}
-
 function getDemoHealingRuns({ limit = 50 } = {}) {
   const db = getDatabase();
   return db.prepare('SELECT * FROM demo_healing_runs ORDER BY created_at DESC LIMIT ?').all(limit).map((r) => ({
@@ -656,13 +456,12 @@ function getDemoHealingRuns({ limit = 50 } = {}) {
     logs: JSON.parse(r.logs || '[]'),
     liveVerified: Boolean(r.live_verified),
     code_snippet: r.healing_status === 'healed'
-      ? buildCodeSnippet(r.locator_key, LOCATOR_TARGETS[r.locator_key]?.propertyName, r.new_locator)
+      ? buildCodeSnippet(r.locator_key, r.locator_key?.split('.')[1], r.new_locator)
       : null,
   }));
 }
 
 module.exports = {
-  runRealHealingCycle, runGenericHealingCycle, findBrokenLocatorInMessage,
-  extractSelectorFromMessage, resetDemoLocators, getDemoHealingRuns,
-  getLocatorsStatus, getActiveCycle,
+  runGenericHealingCycle, extractSelectorFromMessage,
+  getDemoHealingRuns, getActiveCycle,
 };

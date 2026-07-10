@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
-import { RotateCcw, Sparkles, History } from 'lucide-react';
+import { useEffect } from 'react';
+import { Sparkles, History } from 'lucide-react';
 import clsx from 'clsx';
 import { useLiveHealingRunner } from '../../hooks/useLiveHealingRunner';
 import { useSuiteExecutionHistory } from '../../hooks/useSuiteExecutionHistory';
-import { demoHealingApi } from '../../services/api';
 import HealingRunView from '../../components/healing/HealingRunView';
 import SuiteExecutionDetail from '../../components/healing/SuiteExecutionDetail';
 import LocatorRepositoryPanel from '../../components/healing/LocatorRepositoryPanel';
@@ -11,17 +10,17 @@ import LocatorRepositoryPanel from '../../components/healing/LocatorRepositoryPa
 const SUITES = [
   { key: 'smoke', label: 'Smoke' },
   { key: 'full_regression', label: 'Full Regression' },
-  { key: 'login', label: 'Login' },
-  { key: 'cart', label: 'Cart' },
-  { key: 'checkout', label: 'Checkout' },
-  { key: 'inventory', label: 'Inventory' },
+  { key: 'auth', label: 'Login / Logout' },
+  { key: 'dashboard', label: 'Dashboard' },
+  { key: 'navigation', label: 'Navigation' },
+  { key: 'products', label: 'Products' },
+  { key: 'users', label: 'Users' },
+  { key: 'orders', label: 'Orders' },
 ];
 
 export default function LiveHealingView() {
   const { state, start, reset, reportStats, timeline, failures } = useLiveHealingRunner();
   const history = useSuiteExecutionHistory();
-  const [resetting, setResetting] = useState(false);
-  const [resetMessage, setResetMessage] = useState(null);
 
   // Once a newly-started live run finishes, refresh the execution history
   // for that suite so it shows up immediately without a manual reload.
@@ -29,20 +28,6 @@ export default function LiveHealingView() {
     if (state.phase === 'report') history.refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.phase]);
-
-  const handleResetDemo = async () => {
-    setResetting(true);
-    setResetMessage(null);
-    try {
-      const res = await demoHealingApi.reset();
-      setResetMessage({ type: 'success', text: `Reset ${res.data?.length || 0} locator(s) — ready for another live run.` });
-    } catch (err) {
-      setResetMessage({ type: 'error', text: `Reset failed: ${err.message}` });
-    } finally {
-      setResetting(false);
-      setTimeout(() => setResetMessage(null), 5000);
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -64,30 +49,13 @@ export default function LiveHealingView() {
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleResetDemo}
-              disabled={resetting}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 transition-colors disabled:opacity-50"
-              title="Re-break the demo bait locators so the next run has something real to heal"
-            >
-              <RotateCcw className={clsx('w-3.5 h-3.5', resetting && 'animate-spin')} />
-              {resetting ? 'Resetting...' : 'Reset Demo Locators'}
-            </button>
-            <button
-              onClick={() => start(history.suite || 'smoke')}
-              className="btn-primary bg-purple-600 hover:bg-purple-500"
-            >
-              Run Regression
-            </button>
-          </div>
+          <button
+            onClick={() => start(history.suite || 'smoke')}
+            className="btn-primary bg-purple-600 hover:bg-purple-500"
+          >
+            Run Regression
+          </button>
         </div>
-      )}
-
-      {resetMessage && (
-        <p className={clsx('text-xs', resetMessage.type === 'success' ? 'text-green-400' : 'text-red-400')}>
-          {resetMessage.text}
-        </p>
       )}
 
       {state.phase === 'idle' && <LocatorRepositoryPanel />}

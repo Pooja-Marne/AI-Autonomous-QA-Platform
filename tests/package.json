@@ -1,20 +1,19 @@
 {
-  "name": "saucedemo-playwright-tests",
+  "name": "ai-healing-demo-site-playwright-tests",
   "version": "1.0.0",
-  "description": "Playwright test suite for SauceDemo - AI QA Platform",
+  "description": "Playwright test suite for the AI Healing Demo Site - AI Autonomous QA Platform",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
-    "test:login": "playwright test specs/auth/",
-    "test:inventory": "playwright test specs/inventory/",
-    "test:cart": "playwright test specs/cart/",
-    "test:checkout": "playwright test specs/checkout/",
-    "test:e2e": "playwright test specs/e2e/",
-    "test:smoke": "playwright test --grep @smoke",
-    "test:regression": "playwright test --grep @regression",
+    "test:auth": "playwright test specs/auth.spec.js",
+    "test:dashboard": "playwright test specs/dashboard.spec.js",
+    "test:navigation": "playwright test specs/navigation.spec.js",
+    "test:orders": "playwright test specs/orders.spec.js",
+    "test:products": "playwright test specs/products.spec.js",
+    "test:users": "playwright test specs/users.spec.js",
     "report": "playwright show-report",
-    "codegen": "playwright codegen https://www.saucedemo.com"
+    "codegen": "playwright codegen http://localhost:8080"
   },
   "dependencies": {
     "@playwright/test": "^1.49.0"

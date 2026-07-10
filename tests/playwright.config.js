@@ -19,7 +19,7 @@ module.exports = defineConfig({
   ],
 
   use: {
-    baseURL: process.env.BASE_URL || 'https://www.saucedemo.com',
+    baseURL: process.env.BASE_URL || 'http://localhost:8080',
     headless: true,
     viewport: { width: 1280, height: 720 },
     screenshot: 'only-on-failure',

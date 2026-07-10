@@ -86,11 +86,11 @@ function initializeSchema(db) {
       FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
     );
 
-    -- Live "real" AI healing cycles triggered by the two DEMO_MODE-controlled
-    -- broken locators (see tests/playwright/demo/). Separate from
-    -- healing_actions because this captures a richer, presentation-oriented
-    -- record: real screenshot/trace/DOM artifacts, live-verified locator,
-    -- and a step-by-step log trail for the demo audience to follow.
+    -- Real AI self-healing cycles (live DOM capture, AI analysis, live
+    -- verification, real retry). Separate from healing_actions because this
+    -- captures a richer, presentation-oriented record: real screenshot/
+    -- trace/DOM artifacts, live-verified locator, and a step-by-step log
+    -- trail shown on the AI Healing dashboard.
     CREATE TABLE IF NOT EXISTS demo_healing_runs (
       id TEXT PRIMARY KEY,
       run_id TEXT,
@@ -274,8 +274,8 @@ function initializeSchema(db) {
     db.exec('ALTER TABLE pending_triggers ADD COLUMN coverage_summary TEXT');
   }
 
-  // The automation repo is UI-only (SauceDemo) — no real 'api'/'ui' tagged
-  // suite exists. Migrate any schedules seeded before this was known.
+  // The automation repo is UI-only — no real 'api'/'ui' tagged suite exists.
+  // Migrate any schedules seeded before this was known.
   db.exec(`UPDATE scheduler_config SET test_suite = 'regression' WHERE test_suite IN ('api', 'ui')`);
 
   // Additive migration: test_runs predates suite-scoped execution history

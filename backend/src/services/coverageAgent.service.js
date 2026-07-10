@@ -13,9 +13,9 @@ const COVERAGE_LABELS = {
 };
 
 // Platform values must match real Playwright suites in playwrightRunner.service.js
-// (SUITE_PATTERNS) — the automation repo is UI-only (SauceDemo), so there is no
-// real "api"/"ui" tagged suite; anything other than a full/complete run maps to
-// the @regression-tagged subset.
+// (SUITE_PATTERNS) — the automation repo is UI-only, so there is no real
+// "api"/"ui" tagged suite; anything other than a full/complete run maps to
+// the regression suite.
 const SUITE_PRIORITY = ['Complete Regression', 'Regression', 'Module Regression', 'API Regression', 'UI Regression', 'Smoke'];
 const SUITE_TO_PLATFORM_VALUE = {
   'Complete Regression': 'full_regression',
