@@ -89,6 +89,29 @@ function getLocatorById(id) {
   return db.prepare(`SELECT * FROM locator_repository WHERE id = ?`).get(id) || null;
 }
 
+// Hard-deletes one row (unlike reject, which just changes status and keeps
+// history) — for pruning a single bad/test entry without wiping everything.
+function deleteLocator(id) {
+  const db = getDatabase();
+  const existing = getLocatorById(id);
+  if (!existing) return null;
+  db.prepare(`DELETE FROM locator_repository WHERE id = ?`).run(id);
+  syncRuntimeCache();
+  return existing;
+}
+
+// Wipes the entire repository — used by both DELETE /clear and POST /reset
+// (kept as one function since they're the same operation under two names)
+// to get back to a clean slate before a demo, e.g. after chaos runs pile up
+// pending_approval rows.
+function clearAllLocators() {
+  const db = getDatabase();
+  const { count } = db.prepare(`SELECT COUNT(*) as count FROM locator_repository`).get();
+  db.prepare(`DELETE FROM locator_repository`).run();
+  syncRuntimeCache();
+  return { cleared: count };
+}
+
 // One row per page_object+property, showing only the latest version, for
 // the dashboard's summary list — with the full version history attached.
 function listActiveLocators() {
@@ -151,4 +174,5 @@ function updateGitStatus(id, { gitStatus, commitSha, prUrl }) {
 module.exports = {
   recordHealedLocator, rejectLocator, approveLocator, updateGitStatus,
   getLocatorById, listActiveLocators, syncRuntimeCache, RESOLVED_CACHE_PATH,
+  deleteLocator, clearAllLocators,
 };
