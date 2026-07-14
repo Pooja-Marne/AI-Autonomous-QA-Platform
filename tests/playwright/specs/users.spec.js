@@ -1,4 +1,4 @@
-const { test, expect } = require('@playwright/test');
+const { test, expect } = require('../fixtures/healingTest');
 const { LoginPage } = require('../pages/LoginPage');
 const { UsersPage } = require('../pages/UsersPage');
 

@@ -23,10 +23,18 @@ const test = base.test.extend({
     try {
       const html = await page.content();
       const url = page.url();
+      // Capturing the URL alone isn't enough for any authenticated page — a
+      // fresh browser context has no session, so navigating straight there
+      // just bounces back to the login page via the app's own client-side
+      // auth guard. storageState() captures whatever localStorage/cookies
+      // Playwright already tracks (session tokens etc.), generically, with
+      // no per-app knowledge — the healing agent restores this into its own
+      // context so it sees the exact same authenticated state the test did.
+      const storageState = await page.context().storageState();
       fs.mkdirSync(CAPTURE_DIR, { recursive: true });
       fs.writeFileSync(
         path.join(CAPTURE_DIR, `${captureKeyFor(testInfo.title)}.json`),
-        JSON.stringify({ html, url, title: testInfo.title, capturedAt: Date.now() })
+        JSON.stringify({ html, url, storageState, title: testInfo.title, capturedAt: Date.now() })
       );
     } catch {
       // Best-effort — a capture failure must never mask the real test failure.

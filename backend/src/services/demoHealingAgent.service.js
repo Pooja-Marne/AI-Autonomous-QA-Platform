@@ -315,14 +315,18 @@ async function analyzeLocatorFailure({ page, elementDescription, oldLocator, dom
 // Generic, app-agnostic reproduction: prefer the exact URL captured at the
 // moment the original test failed (see readFailureCapture above); if none
 // exists, fall back to opening the live application at BASE_URL directly.
-// No per-module/per-page navigation script is required either way.
-async function reproduceForHealing(page, testName) {
-  const capture = readFailureCapture(testName);
+// The context this page belongs to must already have the captured
+// storageState applied (see runHealingCycle) — restoring session/cookies is
+// what lets this actually land on an authenticated page instead of being
+// bounced to a login screen by the app's own client-side auth guard.
+async function reproduceForHealing(page, capture) {
+  // domcontentloaded, not the default 'load': we only need the DOM to
+  // inspect it, not every image/font/stylesheet to finish fetching.
   if (capture?.url) {
-    await page.goto(capture.url);
+    await page.goto(capture.url, { waitUntil: 'domcontentloaded' });
     return true;
   }
-  await page.goto(BASE_URL);
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
   return false;
 }
 
@@ -420,6 +424,8 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
     return record;
   }
 
+  const capture = readFailureCapture(testName);
+
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
   // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
@@ -427,8 +433,14 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
   // and either crash or hang indefinitely with no error — a real cause of
   // runs getting stuck on "Running"/"Healing" in production.
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  const context = await browser.newContext();
-  await context.tracing.start({ screenshots: true, snapshots: true });
+  // Restoring the captured storageState (localStorage/cookies) is what lets
+  // this land on an authenticated page instead of being bounced to login by
+  // the app's own client-side auth guard — generic, no per-app auth logic.
+  const context = await browser.newContext(capture?.storageState ? { storageState: capture.storageState } : {});
+  // snapshots:false — we already capture our own screenshot/DOM directly;
+  // per-action DOM snapshotting for the trace viewer roughly doubles
+  // tracing overhead and isn't used anywhere in the dashboard.
+  await context.tracing.start({ screenshots: true, snapshots: false });
   const page = await context.newPage();
 
   const artifactSubdir = `${runId || uuidv4()}-heal-${Date.now()}`;
@@ -443,7 +455,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
 
   let record;
   try {
-    const usedCapture = await reproduceForHealing(page, testName);
+    const usedCapture = await reproduceForHealing(page, capture);
     log(usedCapture
       ? 'Navigated to the exact URL captured at the moment of the original failure'
       : `No failure capture found for this test — opened the live application at ${BASE_URL} directly`, 'reproducing');
