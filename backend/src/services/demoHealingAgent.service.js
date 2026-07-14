@@ -330,11 +330,23 @@ async function reproduceForHealing(page, capture) {
   return false;
 }
 
+// `spawn(..., { shell: true })` on POSIX joins the args array into one
+// string with plain spaces before handing it to `/bin/sh -c` — it does NOT
+// shell-quote each element. A test title contains spaces, so without this,
+// the shell word-splits it and Playwright's --grep only ever receives the
+// first word, silently matching every test that happens to start the same
+// way (e.g. both "@create-order ..." tests) instead of just the one being
+// retried. Windows' cmd.exe needs double quotes instead of single quotes.
+function shellQuoteArg(str) {
+  if (process.platform === 'win32') return `"${str.replace(/"/g, '""')}"`;
+  return `'${str.replace(/'/g, `'\\''`)}'`;
+}
+
 function retryTest(testFile, testName) {
   return new Promise((resolve) => {
     const args = ['playwright', 'test'];
     if (testFile) args.push(testFile);
-    if (testName) args.push('--grep', testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (testName) args.push('--grep', shellQuoteArg(testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     args.push('--project=chromium', '--reporter=json');
     const proc = spawn('npx', args, { cwd: TESTS_DIR, shell: true, timeout: 90000 });
     let stdout = '';
