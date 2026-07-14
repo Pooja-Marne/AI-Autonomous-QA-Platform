@@ -7,6 +7,18 @@ const STATUS_CONFIG = {
   not_fixable: { label: '✗ Manual Investigation Required', classes: 'text-red-400 bg-red-500/10 border-red-500/20' },
 };
 
+const FAILURE_TYPE_LABELS = {
+  broken_locator: 'Broken Locator',
+  page_changed: 'Page Changed',
+  element_hidden: 'Element Hidden',
+  dynamic_dom: 'Dynamic DOM',
+  timing_issue: 'Timing Issue',
+  network_issue: 'Network Issue',
+  api_failure: 'API Failure',
+  authentication_issue: 'Authentication Issue',
+  assertion_failure: 'Assertion Failure',
+};
+
 export default function DemoHealingRunCard({ run }) {
   const [expanded, setExpanded] = useState(false);
   const status = STATUS_CONFIG[run.healing_status] || STATUS_CONFIG.not_fixable;
@@ -17,6 +29,11 @@ export default function DemoHealingRunCard({ run }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">{run.locator_key}</span>
+            {run.failure_type && (
+              <span className="text-xs font-medium text-blue-300 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded-full">
+                {FAILURE_TYPE_LABELS[run.failure_type] || run.failure_type}
+              </span>
+            )}
             <span className={clsx('text-xs font-medium px-2 py-0.5 rounded-full border', status.classes)}>{status.label}</span>
             {run.live_verified ? (
               <span className="inline-flex items-center gap-1 text-xs text-green-400"><ShieldCheck className="w-3 h-3" /> Live-verified</span>
@@ -46,7 +63,7 @@ export default function DemoHealingRunCard({ run }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div className="bg-gray-800/40 rounded-lg p-2.5">
               <p className="text-xs text-gray-500">Confidence Score</p>
               <p className="text-lg font-bold text-blue-400">{run.confidence_score ?? '—'}%</p>
@@ -56,6 +73,10 @@ export default function DemoHealingRunCard({ run }) {
               <p className={clsx('text-lg font-bold', run.retry_status === 'passed' ? 'text-green-400' : run.retry_status === 'failed' ? 'text-red-400' : 'text-gray-500')}>
                 {run.retry_status?.toUpperCase() || 'SKIPPED'}
               </p>
+            </div>
+            <div className="bg-gray-800/40 rounded-lg p-2.5">
+              <p className="text-xs text-gray-500">Attempts</p>
+              <p className="text-lg font-bold text-gray-200">{run.attempts ?? '—'}</p>
             </div>
           </div>
 

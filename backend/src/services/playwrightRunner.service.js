@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const { getDatabase } = require('../config/database');
 const { healMultipleTestCases } = require('./aiHealing.service');
-const { runGenericHealingCycle, extractSelectorFromMessage } = require('./demoHealingAgent.service');
+const { runHealingCycle, extractSelectorFromMessage } = require('./demoHealingAgent.service');
 const { generateReport } = require('./reporting.service');
 const { sendSlackNotification } = require('./slack.service');
 const { withTimeout } = require('../utils/withTimeout');
@@ -39,15 +39,19 @@ const SUITE_PATTERNS = {
   users: ['specs/users.spec.js'],
 };
 
-const ALL_MODULES = ['auth', 'dashboard', 'navigation', 'orders', 'products', 'users'];
+// These must match slugifyModule()'s output for each spec file's actual
+// describe() block title — used only to seed the live per-module progress
+// map for the in-progress run view (cosmetic; healing/results correctness
+// doesn't depend on this list).
+const ALL_MODULES = ['login_logout', 'dashboard_cards', 'navigation_menu', 'orders', 'products', 'users'];
 
 const SUITE_MODULES = {
   full_regression: ALL_MODULES,
   regression: ALL_MODULES,
   smoke: ALL_MODULES,
-  auth: ['auth'],
-  dashboard: ['dashboard'],
-  navigation: ['navigation'],
+  auth: ['login_logout'],
+  dashboard: ['dashboard_cards'],
+  navigation: ['navigation_menu'],
   orders: ['orders'],
   products: ['products'],
   users: ['users'],
@@ -81,10 +85,12 @@ function ingestListLine(runId, rawLine) {
   if (entry.logs.length > MAX_LIVE_LOG_LINES) entry.logs.shift();
 
   // Best-effort per-module status from the list reporter's line shape:
-  // "  ✓  1 [chromium] › auth/login.spec.js:10:3 › ..." (✘ for failures).
-  const fileMatch = line.match(/›\s*([\w./-]+\.spec\.js):\d+:\d+\s*›/);
-  if (fileMatch) {
-    const module = deriveModule(fileMatch[1], '');
+  // "  ✓  1 [chromium] › specs/auth.spec.js:10:3 › Login / Logout › ..."
+  // (✘ for failures). The module name comes straight from the test's own
+  // describe() block title — not a keyword-matching guess.
+  const titleMatch = line.match(/›\s*[\w./-]+\.spec\.js:\d+:\d+\s*›\s*([^›]+?)\s*›/);
+  if (titleMatch) {
+    const module = slugifyModule(titleMatch[1]);
     const mod = entry.modules[module];
     if (mod) {
       if (/^[✘x✗]/i.test(line) || line.includes(' failed')) mod.status = 'failed';
@@ -146,10 +152,14 @@ function mapPlaywrightResults(pwResults) {
   const testCases = [];
   if (!pwResults?.suites) return testCases;
 
-  function walkSuites(suites, parentFile = '') {
+  // "module" is derived directly from the test's own describe() block
+  // title (e.g. "Login / Logout", "Orders") — not a keyword-matching guess
+  // against the file path/test name.
+  function walkSuites(suites, parentFile = '', describeTitle = '') {
     for (const suite of suites) {
       const file = suite.file || parentFile;
-      if (suite.suites) walkSuites(suite.suites, file);
+      const title = suite.title || describeTitle;
+      if (suite.suites) walkSuites(suite.suites, file, title);
       for (const spec of suite.specs || []) {
         for (const test of spec.tests || []) {
           const result = test.results?.[0] || {};
@@ -161,7 +171,7 @@ function mapPlaywrightResults(pwResults) {
           const error = result.error;
           testCases.push({
             name: spec.title,
-            module: deriveModule(file, spec.title),
+            module: slugifyModule(title),
             filePath: file,
             status,
             duration_ms: result.duration || 0,
@@ -177,21 +187,9 @@ function mapPlaywrightResults(pwResults) {
   return testCases;
 }
 
-function deriveModule(filePath, title) {
-  const f = (filePath || '').toLowerCase();
-  if (f.includes('auth')) return 'auth';
-  if (f.includes('dashboard')) return 'dashboard';
-  if (f.includes('navigation')) return 'navigation';
-  if (f.includes('orders')) return 'orders';
-  if (f.includes('products')) return 'products';
-  if (f.includes('users')) return 'users';
-  const t = (title || '').toLowerCase();
-  if (t.includes('login') || t.includes('logout')) return 'auth';
-  if (t.includes('dashboard')) return 'dashboard';
-  if (t.includes('order')) return 'orders';
-  if (t.includes('product')) return 'products';
-  if (t.includes('user')) return 'users';
-  return 'ui';
+function slugifyModule(describeTitle) {
+  const slug = (describeTitle || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return slug || 'ui';
 }
 
 async function startPlaywrightRun({ suite = 'smoke', trigger = 'manual', jiraIssueKey } = {}) {
@@ -317,24 +315,25 @@ async function runAndProcess(runId, suite, runName, trigger) {
       }
 
       for (const [key, cases] of byGenericSelector) {
-        // When the same broken selector spans several modules, prefer 'auth'
-        // to reproduce it: its steps just load the page and don't hard-code
-        // a working login first (every other module's reproduce does, to
-        // get past that step) — so it's the one guaranteed to actually
-        // capture the DOM at the point the real failure occurs, instead of
-        // analyzing a page the broken element was never on.
-        const reproduceCase = cases.find((c) => c.module === 'auth') || cases[0];
-        console.log(`[Playwright Runner] Routing unrecognized broken selector "${key}" (seen in ${[...new Set(cases.map((c) => c.module))].join(', ')}) to the generalized self-healing agent, reproducing via "${reproduceCase.module}"...`);
+        // Any one failing test case is a sufficient, exact representative:
+        // the healing cycle reproduces via that SPECIFIC test's own
+        // captured failure state (see readFailureCapture in
+        // demoHealingAgent.service.js) rather than a per-module navigation
+        // script, so there's no "which module reproduces this correctly"
+        // question to resolve here anymore.
+        const reproduceCase = cases[0];
+        console.log(`[Playwright Runner] Routing unrecognized broken selector "${key}" (seen in ${[...new Set(cases.map((c) => c.module))].join(', ')}) to the self-healing agent...`);
         db.prepare(`UPDATE test_runs SET status='healing' WHERE id=?`).run(runId);
         const result = await withTimeout(
-          runGenericHealingCycle({
-            module: reproduceCase.module, runId, testFile: reproduceCase.filePath,
+          runHealingCycle({
+            module: reproduceCase.module, runId, testFile: reproduceCase.filePath, testName: reproduceCase.name,
             failedTestNames: cases.map((c) => c.name), errorMessage: reproduceCase.errorMessage,
+            stackTrace: reproduceCase.stackTrace,
           }),
           HEALING_CYCLE_TIMEOUT_MS,
-          `Generalized self-healing cycle for ${key}`
+          `Self-healing cycle for ${key}`
         ).catch((err) => {
-          console.error(`[Playwright Runner] Generalized self-healing cycle failed or timed out:`, err.message);
+          console.error(`[Playwright Runner] Self-healing cycle failed or timed out:`, err.message);
           return null;
         });
 

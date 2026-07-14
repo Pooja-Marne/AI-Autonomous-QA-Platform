@@ -1,22 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { healTestCase, getHealingStats, classifyFailure } = require('../services/aiHealing.service');
-const { runGenericHealingCycle, extractSelectorFromMessage } = require('../services/demoHealingAgent.service');
+const { runHealingCycle, extractSelectorFromMessage } = require('../services/demoHealingAgent.service');
 const { getDatabase } = require('../config/database');
 const config = require('../config/config');
 const { withTimeout } = require('../utils/withTimeout');
 
 const jiraUrl = (key) => key ? `${config.jira.baseUrl}/browse/${key}` : null;
-
-function guessModule(filePath) {
-  const f = (filePath || '').toLowerCase();
-  if (f.includes('dashboard')) return 'dashboard';
-  if (f.includes('navigation')) return 'navigation';
-  if (f.includes('orders')) return 'orders';
-  if (f.includes('products')) return 'products';
-  if (f.includes('users')) return 'users';
-  return 'auth';
-}
 
 // A synchronous HTTP request can't be allowed to hang as long as a
 // background job can — cap it well under typical proxy/browser timeouts.
@@ -37,10 +27,9 @@ router.post('/analyze', async (req, res) => {
     // fix it whenever that's possible.
     const brokenSelector = extractSelectorFromMessage(errorMessage);
     if (brokenSelector) {
-      const module = guessModule(filePath);
       const result = await withTimeout(
-        runGenericHealingCycle({
-          module, testFile: filePath, failedTestNames: name ? [name] : [], errorMessage,
+        runHealingCycle({
+          module: null, testFile: filePath, testName: name, failedTestNames: name ? [name] : [], errorMessage, stackTrace,
         }),
         ANALYZE_TIMEOUT_MS,
         `Fix with AI for ${brokenSelector}`
@@ -67,8 +56,9 @@ router.post('/analyze', async (req, res) => {
           success: true,
           data: {
             real: true,
-            failureType: 'locator_issue',
+            failureType: result.failureType || 'broken_locator',
             healingStatus: result.healingStatus,
+            attempts: result.attempts,
             fixed: result.healingStatus === 'healed',
             confidence: (result.confidenceScore || 0) / 100,
             reasoning: result.rootCause,

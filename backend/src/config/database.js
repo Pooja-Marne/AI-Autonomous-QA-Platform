@@ -288,6 +288,16 @@ function initializeSchema(db) {
     db.exec('ALTER TABLE test_runs ADD COLUMN execution_logs TEXT');
   }
 
+  // Additive migration: demo_healing_runs predates LLM-driven failure-type
+  // classification and the iterative multi-attempt locator resolution loop.
+  const healingRunCols = db.prepare('PRAGMA table_info(demo_healing_runs)').all().map((c) => c.name);
+  if (!healingRunCols.includes('failure_type')) {
+    db.exec('ALTER TABLE demo_healing_runs ADD COLUMN failure_type TEXT');
+  }
+  if (!healingRunCols.includes('attempts')) {
+    db.exec('ALTER TABLE demo_healing_runs ADD COLUMN attempts INTEGER');
+  }
+
   console.log('[DB] Schema initialized successfully');
 }
 
