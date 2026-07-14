@@ -12,9 +12,18 @@ const RESOLVED_CACHE_PATH = path.join(TESTS_DIR, 'playwright', 'locators', 'reso
 // the dashboard, Jira-triggered runs, and the scheduler all resolve
 // identically — they all read this exact file, not a per-process cache or
 // an in-memory map that only the backend that healed it knows about.
-// Only pending_approval/approved rows are "active" (usable at runtime);
-// rejected/superseded rows are excluded, so rejecting a fix immediately
-// reverts resolution back to the Page Object's hardcoded default.
+//
+// A row is "active" only if it is BOTH pending_approval/approved AND the
+// ABSOLUTE latest version for that page_object+property — not just the
+// latest among approved rows. Without that second condition, once version N
+// gets approved, a LATER version N+1 getting rejected (because the site
+// changed again and that attempt's retry failed) would silently fall back
+// to serving the stale, already-superseded version N forever — exactly the
+// bug that let an old 98%-confidence fix keep resolving even though two
+// newer healing cycles had since proven it no longer matches the live site.
+// If the absolute-latest version is rejected, NO row is served — resolution
+// correctly reverts to the Page Object's hardcoded default until a fresh
+// healing cycle re-verifies a working fix.
 function syncRuntimeCache() {
   const db = getDatabase();
   const rows = db.prepare(`
@@ -23,7 +32,6 @@ function syncRuntimeCache() {
       AND lr.version = (
         SELECT MAX(version) FROM locator_repository lr2
         WHERE lr2.page_object = lr.page_object AND lr2.property_name = lr.property_name
-          AND lr2.status IN ('pending_approval', 'approved')
       )
   `).all();
 
