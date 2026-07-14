@@ -55,6 +55,39 @@ function findPageObjectPropertyForSelector(oldSelector) {
   return null;
 }
 
+// Fallback for when the broken value never matches any Page Object's
+// hardcoded default — e.g. the break came from a runtime DOM mutation
+// (Chaos Mode, or any live attribute rename) rather than an edit to
+// source, so the code's default is still the CORRECT value and can never
+// string-match the broken one. Reads the actual stack trace's file+line —
+// which points at exactly where `this.<property>` was accessed — and
+// extracts the property name directly from source at that line, plus the
+// class name from the file. Fully generic: works for any page/property.
+function findPageObjectPropertyFromStackTrace(stackTrace) {
+  if (!stackTrace) return null;
+  const pagesDirMarker = path.join('playwright', 'pages') + path.sep;
+  const altMarker = 'playwright/pages/';
+  for (const rawLine of stackTrace.split('\n')) {
+    const frameMatch = rawLine.match(/\(?([^\s()]+\.js):(\d+):\d+\)?/);
+    if (!frameMatch) continue;
+    const [, filePath, lineNumStr] = frameMatch;
+    if (!filePath.includes(pagesDirMarker) && !filePath.includes(altMarker)) continue;
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const lines = content.split('\n');
+      const line = lines[parseInt(lineNumStr, 10) - 1] || '';
+      const propMatch = line.match(/this\.(\w+)/);
+      const classMatch = content.match(/class\s+(\w+)/);
+      if (propMatch && classMatch) {
+        return { file: path.basename(filePath), className: classMatch[1], propertyName: propMatch[1] };
+      }
+    } catch {
+      // try the next stack frame
+    }
+  }
+  return null;
+}
+
 // Reads the real DOM/URL captured automatically at the exact moment a test
 // failed (see tests/playwright/fixtures/healingTest.js) — this is what lets
 // the agent analyze the REAL failure state instead of relying on hardcoded
@@ -537,7 +570,14 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
     const { recordHealedLocator, rejectLocator } = require('./locatorRepository.service');
 
     if (analysis.liveVerified) {
-      owner = findPageObjectPropertyForSelector(oldLocator);
+      // Try matching the broken value against a Page Object default first
+      // (works when source was edited to something wrong); fall back to
+      // reading the stack trace's actual file+line (works when the break
+      // came from a runtime DOM mutation instead, e.g. Chaos Mode) — the
+      // code's default is still correct in that case, so it never
+      // string-matches, but the stack trace still tells us exactly which
+      // property was being accessed.
+      owner = findPageObjectPropertyForSelector(oldLocator) || findPageObjectPropertyFromStackTrace(stackTrace);
       if (!owner) {
         log(`Found a live-verified replacement, but "${oldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`);
       } else {
@@ -575,7 +615,10 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
     }
 
     const finalTimeTakenMs = timeTakenMs();
-    const resolverTag = { native: '[Native]', openai: '[OpenAI]', claude: '[Claude]', none: '[Failed]' }[analysis.resolvedBy] || '';
+    // Internally we still track exactly which tier resolved it
+    // (analysis.resolvedBy, stored separately) — the displayed root cause
+    // just says "AI Analysis" rather than naming a specific provider.
+    const resolverTag = { native: '[Deterministic]', openai: '[AI Analysis]', claude: '[AI Analysis]', none: '[Unresolved]' }[analysis.resolvedBy] || '';
     const locatorKey = owner ? `${owner.className}.${owner.propertyName}` : oldLocator;
     record = {
       id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
