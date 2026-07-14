@@ -342,6 +342,29 @@ function shellQuoteArg(str) {
   return `'${str.replace(/'/g, `'\\''`)}'`;
 }
 
+// Pulls the first real failure message out of a Playwright JSON result —
+// used only for diagnostics (why a retry failed), never for pass/fail logic.
+function extractFirstFailureMessage(results) {
+  let message = null;
+  function walk(suites) {
+    for (const suite of suites || []) {
+      if (message) return;
+      if (suite.suites) walk(suite.suites);
+      for (const spec of suite.specs || []) {
+        for (const test of spec.tests || []) {
+          const result = test.results?.[test.results.length - 1];
+          if (result?.status !== 'passed' && result?.error?.message) {
+            message = result.error.message.replace(/\x1B\[[0-9;]*m/g, '').slice(0, 300);
+            return;
+          }
+        }
+      }
+    }
+  }
+  walk(results?.suites);
+  return message;
+}
+
 function retryTest(testFile, testName) {
   return new Promise((resolve) => {
     const args = ['playwright', 'test'];
@@ -350,19 +373,27 @@ function retryTest(testFile, testName) {
     args.push('--project=chromium', '--reporter=json');
     const proc = spawn('npx', args, { cwd: TESTS_DIR, shell: true, timeout: 90000 });
     let stdout = '';
+    let stderr = '';
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
-    proc.on('close', () => {
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
       try {
         const jsonStart = stdout.indexOf('{');
         const results = JSON.parse(stdout.substring(jsonStart));
         const total = results.stats?.expected + results.stats?.unexpected + results.stats?.flaky || 0;
         const failed = results.stats?.unexpected || 0;
-        resolve({ passed: failed === 0 && total > 0, totalCount: total, passedCount: total - failed });
-      } catch {
-        resolve({ passed: false, totalCount: 0, passedCount: 0 });
+        resolve({
+          passed: failed === 0 && total > 0, totalCount: total, passedCount: total - failed,
+          failureMessage: failed > 0 ? extractFirstFailureMessage(results) : null,
+        });
+      } catch (parseErr) {
+        resolve({
+          passed: false, totalCount: 0, passedCount: 0,
+          failureMessage: `Could not parse retry output (exit ${code}): ${parseErr.message}. stderr: ${stderr.slice(0, 300)}`,
+        });
       }
     });
-    proc.on('error', () => resolve({ passed: false, totalCount: 0, passedCount: 0 }));
+    proc.on('error', (err) => resolve({ passed: false, totalCount: 0, passedCount: 0, failureMessage: `spawn error: ${err.message}` }));
   });
 }
 
@@ -527,6 +558,9 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
         retryStatus = retry.passed ? 'passed' : 'failed';
         healingStatus = retry.passed ? 'healed' : 'not_fixable';
         log(`Retry result: ${retryStatus.toUpperCase()} (${retry.passedCount}/${retry.totalCount} tests passing)`);
+        if (!retry.passed && retry.failureMessage) {
+          log(`Retry failure detail: ${retry.failureMessage}`);
+        }
 
         if (!retry.passed) {
           // The fix didn't actually validate against the real retry — pull
