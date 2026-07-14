@@ -200,6 +200,10 @@ async function startPlaywrightRun({ suite = 'smoke', trigger = 'manual', jiraIss
 
   console.log(`[Playwright Runner] Starting run ${runId} | Suite: ${suite}`);
 
+  // Cheap (one row read + string compare) — catches a deploy that landed
+  // between backend boot and this run without needing a restart to notice.
+  require('./locatorRepository.service').checkAndInvalidateOnVersionChange();
+
   db.prepare(`
     INSERT INTO test_runs (id, name, status, trigger_type, branch, total_tests, started_at, suite)
     VALUES (?, ?, 'running', ?, 'playwright', 0, ?, ?)

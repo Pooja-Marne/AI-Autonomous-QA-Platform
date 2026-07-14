@@ -298,6 +298,20 @@ function initializeSchema(db) {
     db.exec('ALTER TABLE demo_healing_runs ADD COLUMN attempts INTEGER');
   }
 
+  // Tracks the last known app version this backend healed locators under —
+  // a single row, updated whenever a version change is detected (see
+  // locatorRepository.service.js's checkAndInvalidateOnVersionChange()).
+  // This is what lets a new deployment/PR merge automatically invalidate
+  // stale locator-repository entries instead of silently carrying them
+  // forward into code/site state they were never verified against.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_version_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      last_known_version TEXT,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
   console.log('[DB] Schema initialized successfully');
 }
 

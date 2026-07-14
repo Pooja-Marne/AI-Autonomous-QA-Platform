@@ -1,11 +1,64 @@
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 const { getDatabase } = require('../config/database');
 const config = require('../config/config');
 
 const TESTS_DIR = config.automation.repoPath;
 const RESOLVED_CACHE_PATH = path.join(TESTS_DIR, 'playwright', 'locators', 'resolved-locators.json');
+
+// Identifies which build of the app is currently running — Railway sets
+// this automatically on every deploy; falls back to reading git HEAD
+// directly for local dev, where that env var isn't present.
+function getCurrentAppVersion() {
+  if (process.env.RAILWAY_GIT_COMMIT_SHA) return process.env.RAILWAY_GIT_COMMIT_SHA;
+  try {
+    return execSync('git rev-parse HEAD', { cwd: __dirname, encoding: 'utf-8' }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+// Runs once at backend startup and again at the start of every test run
+// (cheap: one row read + a string compare) — if the app's version has
+// changed since the last time we healed anything (a new deployment, a
+// merged PR, or any other code change), every currently-active locator fix
+// is superseded: it was verified against a DIFFERENT version of the code
+// and/or site, and carrying it forward silently is exactly what let a
+// stale fix resurface. Only a genuine version change invalidates anything —
+// an ordinary restart on the SAME build leaves valid healing state intact.
+function checkAndInvalidateOnVersionChange() {
+  const db = getDatabase();
+  const currentVersion = getCurrentAppVersion();
+  const row = db.prepare('SELECT last_known_version FROM app_version_state WHERE id = 1').get();
+  const lastKnownVersion = row?.last_known_version || null;
+  const cacheLoaded = fs.existsSync(RESOLVED_CACHE_PATH);
+  const changed = lastKnownVersion !== null && lastKnownVersion !== currentVersion;
+
+  console.log('[LocatorCache] Cache Loaded:', cacheLoaded ? 'YES' : 'NO');
+  console.log('[LocatorCache] Cache Version:', lastKnownVersion || '(none recorded yet)');
+  console.log('[LocatorCache] Current Application Version:', currentVersion);
+  console.log('[LocatorCache] Cache Invalidated:', changed ? 'YES' : 'NO');
+  console.log('[LocatorCache] Reason:', changed
+    ? 'Application version changed since last healing — all active locator fixes were verified against a different build and are now superseded.'
+    : (lastKnownVersion === null ? 'First run — no prior version recorded.' : 'Same application version — existing healed locators remain valid.'));
+
+  if (changed) {
+    const { changes } = db.prepare(
+      `UPDATE locator_repository SET status = 'superseded_by_deploy' WHERE status IN ('pending_approval', 'approved')`
+    ).run();
+    console.log(`[LocatorCache] Superseded ${changes} active locator entr${changes === 1 ? 'y' : 'ies'} from the previous build.`);
+    syncRuntimeCache();
+  }
+
+  db.prepare(`
+    INSERT INTO app_version_state (id, last_known_version, updated_at) VALUES (1, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET last_known_version = excluded.last_known_version, updated_at = CURRENT_TIMESTAMP
+  `).run(currentVersion);
+
+  return { changed, currentVersion, lastKnownVersion };
+}
 
 // Regenerates the JSON file every Page Object's resolve() call reads at
 // construction time. This is THE mechanism that makes terminal execution,
@@ -182,5 +235,5 @@ function updateGitStatus(id, { gitStatus, commitSha, prUrl }) {
 module.exports = {
   recordHealedLocator, rejectLocator, approveLocator, updateGitStatus,
   getLocatorById, listActiveLocators, syncRuntimeCache, RESOLVED_CACHE_PATH,
-  deleteLocator, clearAllLocators,
+  deleteLocator, clearAllLocators, checkAndInvalidateOnVersionChange, getCurrentAppVersion,
 };

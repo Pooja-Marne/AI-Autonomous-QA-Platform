@@ -93,6 +93,11 @@ async function bootstrap() {
   try {
     getDatabase();
     logger.info('[DB] Connected and schema ready');
+    // A new deployment (or a merged PR, since that triggers a redeploy too)
+    // means every currently-active healed locator was verified against a
+    // DIFFERENT build — check on every boot so stale fixes never silently
+    // carry forward into code/site state they were never validated against.
+    require('./services/locatorRepository.service').checkAndInvalidateOnVersionChange();
     // Scheduler is intentionally NOT auto-started: it's removed from the UI
     // (no way to see/manage/stop its cron jobs anymore) and its hourly smoke
     // run was firing concurrently with manual/demo runs, spawning a second
