@@ -70,8 +70,8 @@ export default function DemoHealingRunCard({ run }) {
             </div>
             <div className="bg-gray-800/40 rounded-lg p-2.5">
               <p className="text-xs text-gray-500">Retry Result</p>
-              <p className={clsx('text-lg font-bold', run.retry_status === 'passed' ? 'text-green-400' : run.retry_status === 'failed' ? 'text-red-400' : 'text-gray-500')}>
-                {run.retry_status?.toUpperCase() || 'SKIPPED'}
+              <p className={clsx('text-lg font-bold', (run.retry_status === 'passed' || run.retry_status === 'passed_partial') ? 'text-green-400' : run.retry_status === 'failed' ? 'text-red-400' : 'text-gray-500')}>
+                {run.retry_status === 'passed_partial' ? 'FIXED (MORE FOUND)' : run.retry_status?.toUpperCase() || 'SKIPPED'}
               </p>
             </div>
             <div className="bg-gray-800/40 rounded-lg p-2.5">

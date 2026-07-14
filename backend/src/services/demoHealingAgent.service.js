@@ -23,6 +23,11 @@ const ARTIFACTS_DIR = path.join(__dirname, '..', '..', 'data', 'demo-artifacts')
 const CAPTURE_DIR = path.join(TESTS_DIR, 'test-results', 'failure-context');
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
 const MAX_HEALING_ATTEMPTS = 3;
+// Guards against an unbounded chain if a test is blocked by many sequential
+// broken locators — three genuinely distinct broken locators in one test is
+// already an unusual amount of chaos; beyond that, stop and surface what
+// was fixed so far rather than looping indefinitely.
+const MAX_LOCATORS_PER_CYCLE = 3;
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
 const anthropic = config.anthropic.apiKey ? new Anthropic({ apiKey: config.anthropic.apiKey }) : null;
@@ -375,19 +380,26 @@ function shellQuoteArg(str) {
   return `'${str.replace(/'/g, `'\\''`)}'`;
 }
 
-// Pulls the first real failure message out of a Playwright JSON result —
-// used only for diagnostics (why a retry failed), never for pass/fail logic.
-function extractFirstFailureMessage(results) {
-  let message = null;
+// Pulls the first real failure's message + stack out of a Playwright JSON
+// result. The message is used both for diagnostics AND to detect whether a
+// retry's remaining failure points at the SAME locator (the fix was wrong)
+// or a DIFFERENT one (the fix was right, but the test hit a second,
+// independent broken locator further along the same flow) — see the
+// advancedPastThisLocator check in runHealingCycle.
+function extractFirstFailureDetails(results) {
+  let detail = null;
   function walk(suites) {
     for (const suite of suites || []) {
-      if (message) return;
+      if (detail) return;
       if (suite.suites) walk(suite.suites);
       for (const spec of suite.specs || []) {
         for (const test of spec.tests || []) {
           const result = test.results?.[test.results.length - 1];
-          if (result?.status !== 'passed' && result?.error?.message) {
-            message = result.error.message.replace(/\x1B\[[0-9;]*m/g, '').slice(0, 300);
+          if (result?.status !== 'passed' && result?.error) {
+            detail = {
+              message: (result.error.message || '').replace(/\x1B\[[0-9;]*m/g, '').slice(0, 300),
+              stack: (result.error.stack || '').replace(/\x1B\[[0-9;]*m/g, ''),
+            };
             return;
           }
         }
@@ -395,7 +407,7 @@ function extractFirstFailureMessage(results) {
     }
   }
   walk(results?.suites);
-  return message;
+  return detail;
 }
 
 function retryTest(testFile, testName) {
@@ -415,18 +427,21 @@ function retryTest(testFile, testName) {
         const results = JSON.parse(stdout.substring(jsonStart));
         const total = results.stats?.expected + results.stats?.unexpected + results.stats?.flaky || 0;
         const failed = results.stats?.unexpected || 0;
+        const failureDetail = failed > 0 ? extractFirstFailureDetails(results) : null;
         resolve({
           passed: failed === 0 && total > 0, totalCount: total, passedCount: total - failed,
-          failureMessage: failed > 0 ? extractFirstFailureMessage(results) : null,
+          failureMessage: failureDetail?.message || null,
+          failureStack: failureDetail?.stack || null,
         });
       } catch (parseErr) {
         resolve({
           passed: false, totalCount: 0, passedCount: 0,
           failureMessage: `Could not parse retry output (exit ${code}): ${parseErr.message}. stderr: ${stderr.slice(0, 300)}`,
+          failureStack: null,
         });
       }
     });
-    proc.on('error', (err) => resolve({ passed: false, totalCount: 0, passedCount: 0, failureMessage: `spawn error: ${err.message}` }));
+    proc.on('error', (err) => resolve({ passed: false, totalCount: 0, passedCount: 0, failureMessage: `spawn error: ${err.message}`, failureStack: null }));
   });
 }
 
@@ -500,8 +515,6 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
     return record;
   }
 
-  const capture = readFailureCapture(testName);
-
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
   // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
@@ -509,133 +522,214 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
   // and either crash or hang indefinitely with no error — a real cause of
   // runs getting stuck on "Running"/"Healing" in production.
   const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-  // Restoring the captured storageState (localStorage/cookies) is what lets
-  // this land on an authenticated page instead of being bounced to login by
-  // the app's own client-side auth guard — generic, no per-app auth logic.
-  const context = await browser.newContext(capture?.storageState ? { storageState: capture.storageState } : {});
-  // snapshots:false — we already capture our own screenshot/DOM directly;
-  // per-action DOM snapshotting for the trace viewer roughly doubles
-  // tracing overhead and isn't used anywhere in the dashboard.
-  await context.tracing.start({ screenshots: true, snapshots: false });
-  const page = await context.newPage();
+  const { recordHealedLocator, rejectLocator } = require('./locatorRepository.service');
 
-  const artifactSubdir = `${runId || uuidv4()}-heal-${Date.now()}`;
-  const artifactDir = path.join(ARTIFACTS_DIR, artifactSubdir);
-  fs.mkdirSync(artifactDir, { recursive: true });
-  const screenshotPath = `${artifactSubdir}/screenshot.png`;
-  const domSnapshotPath = `${artifactSubdir}/dom.html`;
-  const tracePath = `${artifactSubdir}/trace.zip`;
-  const screenshotAbsPath = path.join(artifactDir, 'screenshot.png');
-  const domSnapshotAbsPath = path.join(artifactDir, 'dom.html');
-  const traceAbsPath = path.join(artifactDir, 'trace.zip');
+  // A single failing test can be blocked by MORE THAN ONE broken locator in
+  // sequence (e.g. username AND password both broken). Fixing the first one
+  // correctly just means the retry advances further and fails on the next
+  // one — a DIFFERENT locator, not the one we just fixed. Looping here
+  // (instead of one-shot analyze+retry) is what lets the agent recognize
+  // that as proof the first fix was correct, keep it, and go on to heal the
+  // newly-exposed locator too — instead of wrongly rejecting a provably
+  // working fix just because the overall test still failed for an
+  // unrelated, later reason.
+  let currentOldLocator = oldLocator;
+  let currentStackTrace = stackTrace;
+  let currentCapture = readFailureCapture(testName);
+  const records = [];
 
-  let record;
   try {
-    const usedCapture = await reproduceForHealing(page, capture);
-    log(usedCapture
-      ? 'Navigated to the exact URL captured at the moment of the original failure'
-      : `No failure capture found for this test — opened the live application at ${BASE_URL} directly`, 'reproducing');
+    for (let locatorIndex = 1; locatorIndex <= MAX_LOCATORS_PER_CYCLE; locatorIndex++) {
+      const logsStartIndex = logs.length;
+      // Restoring the captured storageState (localStorage/cookies) is what
+      // lets this land on an authenticated page instead of being bounced to
+      // login by the app's own client-side auth guard — generic, no
+      // per-app auth logic.
+      const context = await browser.newContext(currentCapture?.storageState ? { storageState: currentCapture.storageState } : {});
+      // snapshots:false — we already capture our own screenshot/DOM
+      // directly; per-action DOM snapshotting for the trace viewer roughly
+      // doubles tracing overhead and isn't used anywhere in the dashboard.
+      await context.tracing.start({ screenshots: true, snapshots: false });
+      const page = await context.newPage();
 
-    await page.screenshot({ path: screenshotAbsPath, fullPage: true }).catch(() => {});
-    log(`Captured screenshot -> ${screenshotPath}`);
-    let screenshotBase64 = null;
-    try { screenshotBase64 = fs.readFileSync(screenshotAbsPath).toString('base64'); } catch { /* screenshot best-effort */ }
+      const artifactSubdir = `${runId || uuidv4()}-heal-${Date.now()}-${locatorIndex}`;
+      const artifactDir = path.join(ARTIFACTS_DIR, artifactSubdir);
+      fs.mkdirSync(artifactDir, { recursive: true });
+      const screenshotPath = `${artifactSubdir}/screenshot.png`;
+      const domSnapshotPath = `${artifactSubdir}/dom.html`;
+      const tracePath = `${artifactSubdir}/trace.zip`;
+      const screenshotAbsPath = path.join(artifactDir, 'screenshot.png');
+      const domSnapshotAbsPath = path.join(artifactDir, 'dom.html');
+      const traceAbsPath = path.join(artifactDir, 'trace.zip');
 
-    const domContent = await page.content();
-    fs.writeFileSync(domSnapshotAbsPath, domContent);
-    log(`Captured DOM snapshot -> ${domSnapshotPath}`);
+      let record;
+      try {
+        const usedCapture = await reproduceForHealing(page, currentCapture);
+        log(usedCapture
+          ? 'Navigated to the exact URL captured at the moment of the original failure'
+          : `No failure capture found for this test — opened the live application at ${BASE_URL} directly`, 'reproducing');
 
-    await context.tracing.stop({ path: traceAbsPath });
-    log(`Saved Playwright trace -> ${tracePath}`);
+        await page.screenshot({ path: screenshotAbsPath, fullPage: true }).catch(() => {});
+        log(`Captured screenshot -> ${screenshotPath}`);
+        let screenshotBase64 = null;
+        try { screenshotBase64 = fs.readFileSync(screenshotAbsPath).toString('base64'); } catch { /* screenshot best-effort */ }
 
-    log('Inspecting the live DOM for candidate interactive elements (data-test, id, aria-label, role, placeholder, text)...', 'analyzing');
-    const candidates = await gatherCandidateElements(page);
-    log(`Found ${candidates.length} candidate elements on the live page.`);
+        const domContent = await page.content();
+        fs.writeFileSync(domSnapshotAbsPath, domContent);
+        log(`Captured DOM snapshot -> ${domSnapshotPath}`);
 
-    const analysis = await analyzeLocatorFailure({
-      page,
-      elementDescription: `an element the test "${testName || 'unknown'}" could not find (originally targeted by: ${oldLocator})`,
-      oldLocator, domSnapshot: domContent, candidates, screenshotBase64, log,
-    });
+        await context.tracing.stop({ path: traceAbsPath });
+        log(`Saved Playwright trace -> ${tracePath}`);
 
-    if (runId) {
-      const cycle = activeCycles.get(runId);
-      if (cycle) Object.assign(cycle, { newLocator: analysis.suggestedLocator, confidence: analysis.confidence, rootCause: analysis.rootCause });
-    }
+        log('Inspecting the live DOM for candidate interactive elements (data-test, id, aria-label, role, placeholder, text)...', 'analyzing');
+        const candidates = await gatherCandidateElements(page);
+        log(`Found ${candidates.length} candidate elements on the live page.`);
 
-    let retryStatus = 'skipped';
-    let healingStatus = 'not_fixable';
-    let owner = null;
-    let repositoryEntry = null;
-    const { recordHealedLocator, rejectLocator } = require('./locatorRepository.service');
+        const analysis = await analyzeLocatorFailure({
+          page,
+          elementDescription: `an element the test "${testName || 'unknown'}" could not find (originally targeted by: ${currentOldLocator})`,
+          oldLocator: currentOldLocator, domSnapshot: domContent, candidates, screenshotBase64, log,
+        });
 
-    if (analysis.liveVerified) {
-      // Try matching the broken value against a Page Object default first
-      // (works when source was edited to something wrong); fall back to
-      // reading the stack trace's actual file+line (works when the break
-      // came from a runtime DOM mutation instead, e.g. Chaos Mode) — the
-      // code's default is still correct in that case, so it never
-      // string-matches, but the stack trace still tells us exactly which
-      // property was being accessed.
-      owner = findPageObjectPropertyForSelector(oldLocator) || findPageObjectPropertyFromStackTrace(stackTrace);
-      if (!owner) {
-        log(`Found a live-verified replacement, but "${oldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`);
-      } else {
+        if (runId) {
+          const cycle = activeCycles.get(runId);
+          if (cycle) Object.assign(cycle, { newLocator: analysis.suggestedLocator, confidence: analysis.confidence, rootCause: analysis.rootCause });
+        }
+
+        // Internally we still track exactly which tier resolved it
+        // (analysis.resolvedBy, stored separately) — the displayed root
+        // cause just says "AI Analysis" rather than naming a provider.
+        const resolverTag = { native: '[Deterministic]', openai: '[AI Analysis]', claude: '[AI Analysis]', none: '[Unresolved]' }[analysis.resolvedBy] || '';
+
+        if (!analysis.liveVerified) {
+          log('Could not find a working replacement after all attempts. Flagging for manual review with the full attempt history attached.', 'done');
+          record = {
+            id: uuidv4(), runId, locatorKey: currentOldLocator, testFile, failedTests: failedTestNames,
+            oldLocator: currentOldLocator, newLocator: null, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            confidenceScore: analysis.confidence, liveVerified: false, healingStatus: 'not_fixable', retryStatus: 'skipped',
+            screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
+            failureType: classification.failureType, attempts: analysis.attempts || 0,
+          };
+          records.push(record);
+          break;
+        }
+
+        // Try matching the broken value against a Page Object default first
+        // (works when source was edited to something wrong); fall back to
+        // reading the stack trace's actual file+line (works when the break
+        // came from a runtime DOM mutation instead, e.g. Chaos Mode) — the
+        // code's default is still correct in that case, so it never
+        // string-matches, but the stack trace still tells us exactly which
+        // property was being accessed.
+        const owner = findPageObjectPropertyForSelector(currentOldLocator) || findPageObjectPropertyFromStackTrace(currentStackTrace);
+        if (!owner) {
+          log(`Found a live-verified replacement, but "${currentOldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`, 'done');
+          record = {
+            id: uuidv4(), runId, locatorKey: currentOldLocator, testFile, failedTests: failedTestNames,
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'not_fixable', retryStatus: 'skipped',
+            screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
+            failureType: classification.failureType, attempts: analysis.attempts || 0,
+          };
+          records.push(record);
+          break;
+        }
+
         // Record BEFORE retrying — this writes the fix into the Centralized
         // Locator Repository's runtime cache (resolved-locators.json), which
         // is what the retry's fresh Page Object construction actually reads.
         // Source code (the .js file) is untouched here — that only happens
         // if/when a human approves this via the dashboard (Git integration).
-        repositoryEntry = recordHealedLocator({
+        const repositoryEntry = recordHealedLocator({
           pageObject: owner.className, propertyName: owner.propertyName,
-          originalLocator: oldLocator, healedLocator: analysis.suggestedLocator,
+          originalLocator: currentOldLocator, healedLocator: analysis.suggestedLocator,
           confidenceScore: analysis.confidence, healingReason: analysis.rootCause,
           testFile, module, runId, liveVerified: true,
         });
         log(`Stored in Locator Repository as ${owner.className}.${owner.propertyName} (v${repositoryEntry.version}, pending approval) and retrying the exact failing test...`, 'retrying');
 
         const retry = await retryTest(testFile, testName);
-        retryStatus = retry.passed ? 'passed' : 'failed';
-        healingStatus = retry.passed ? 'healed' : 'not_fixable';
-        log(`Retry result: ${retryStatus.toUpperCase()} (${retry.passedCount}/${retry.totalCount} tests passing)`);
-        if (!retry.passed && retry.failureMessage) {
-          log(`Retry failure detail: ${retry.failureMessage}`);
+        log(`Retry result: ${retry.passed ? 'PASSED' : 'FAILED'} (${retry.passedCount}/${retry.totalCount} tests passing)`);
+        if (!retry.passed && retry.failureMessage) log(`Retry failure detail: ${retry.failureMessage}`);
+
+        const locatorKey = `${owner.className}.${owner.propertyName}`;
+
+        if (retry.passed) {
+          record = {
+            id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'healed', retryStatus: 'passed',
+            screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
+            failureType: classification.failureType, attempts: analysis.attempts || 0,
+            codeSnippet: buildCodeSnippet(locatorKey, owner.propertyName, analysis.suggestedLocator),
+          };
+          records.push(record);
+          log(`Healing cycle complete in ${timeTakenMs()}ms — status: HEALED`, 'done');
+          break;
         }
 
-        if (!retry.passed) {
-          // The fix didn't actually validate against the real retry — pull
-          // it out of rotation immediately so no subsequent run keeps
-          // resolving to a locator that doesn't actually work.
-          rejectLocator(repositoryEntry.id);
-          log('Retry failed — rejected the repository entry; runtime resolution reverts to the Page Object default.');
+        const nextLocator = extractSelectorFromMessage(retry.failureMessage);
+        const advancedPastThisLocator = nextLocator && nextLocator !== currentOldLocator;
+
+        if (advancedPastThisLocator) {
+          // The retry progressed past the locator we just fixed and failed
+          // on a DIFFERENT one — proof this fix was correct. Keep it (do
+          // NOT reject) and loop to heal the newly-exposed locator too.
+          log(`This fix resolved "${currentOldLocator}" — the retry advanced further and hit a separate broken locator ("${nextLocator}"). Keeping this fix and continuing to heal the next one...`);
+          record = {
+            id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'healed', retryStatus: 'passed_partial',
+            screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
+            failureType: classification.failureType, attempts: analysis.attempts || 0,
+            codeSnippet: buildCodeSnippet(locatorKey, owner.propertyName, analysis.suggestedLocator),
+          };
+          records.push(record);
+          currentOldLocator = nextLocator;
+          currentStackTrace = retry.failureStack || null;
+          currentCapture = readFailureCapture(testName);
+          continue;
         }
+
+        // Same locator still broken (or no locator identifiable in the
+        // retry failure) — this fix genuinely didn't work in practice. Pull
+        // it out of rotation immediately so no subsequent run keeps
+        // resolving to a locator that doesn't actually work.
+        rejectLocator(repositoryEntry.id);
+        log('Retry failed against the same locator — rejected the repository entry; runtime resolution reverts to the Page Object default.', 'done');
+        record = {
+          id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
+          oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+          confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'not_fixable', retryStatus: 'failed',
+          screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
+          failureType: classification.failureType, attempts: analysis.attempts || 0,
+        };
+        records.push(record);
+        break;
+      } finally {
+        await context.close();
       }
-    } else {
-      log('Could not find a working replacement after all attempts. Flagging for manual review with the full attempt history attached.');
     }
-
-    const finalTimeTakenMs = timeTakenMs();
-    // Internally we still track exactly which tier resolved it
-    // (analysis.resolvedBy, stored separately) — the displayed root cause
-    // just says "AI Analysis" rather than naming a specific provider.
-    const resolverTag = { native: '[Deterministic]', openai: '[AI Analysis]', claude: '[AI Analysis]', none: '[Unresolved]' }[analysis.resolvedBy] || '';
-    const locatorKey = owner ? `${owner.className}.${owner.propertyName}` : oldLocator;
-    record = {
-      id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-      oldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
-      confidenceScore: analysis.confidence, liveVerified: analysis.liveVerified, healingStatus, retryStatus,
-      screenshotPath, tracePath, domSnapshotPath, timeTakenMs: finalTimeTakenMs, logs,
-      failureType: classification.failureType, attempts: analysis.attempts || 0,
-      codeSnippet: healingStatus === 'healed' && owner ? buildCodeSnippet(locatorKey, owner.propertyName, analysis.suggestedLocator) : null,
-    };
-    persistDemoHealingRun(record);
-    log(`Healing cycle complete in ${finalTimeTakenMs}ms — status: ${healingStatus.toUpperCase()}`, 'done');
   } finally {
     await browser.close();
     if (runId) activeCycles.delete(runId);
   }
 
-  return record;
+  // If we hit MAX_LOCATORS_PER_CYCLE while still finding new broken locators
+  // in a chain, every fix found so far was individually correct (each got
+  // validated by the retry advancing past it) — but the test as a whole was
+  // never actually confirmed passing. Report that honestly instead of
+  // inheriting the last iteration's 'healed'/'passed_partial' status, which
+  // would otherwise tell the caller the whole test passed when it didn't.
+  const last = records[records.length - 1];
+  if (last?.retryStatus === 'passed_partial') {
+    last.healingStatus = 'not_fixable';
+    last.rootCause = `${last.rootCause} [Reached the ${MAX_LOCATORS_PER_CYCLE}-locator-per-cycle limit — every fix found so far is valid and stays active, but the test may still be blocked by further broken locators beyond this cap.]`;
+    log(`Reached the ${MAX_LOCATORS_PER_CYCLE}-locator-per-cycle limit with more broken locators still ahead — keeping all fixes found so far, but not marking this cycle as fully healed.`, 'done');
+  }
+
+  for (const r of records) persistDemoHealingRun(r);
+  return records[records.length - 1] || null;
 }
 
 function getDemoHealingRuns({ limit = 50 } = {}) {
