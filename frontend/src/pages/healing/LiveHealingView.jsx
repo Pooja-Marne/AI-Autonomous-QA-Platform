@@ -8,8 +8,6 @@ import SuiteExecutionDetail from '../../components/healing/SuiteExecutionDetail'
 import LocatorRepositoryPanel from '../../components/healing/LocatorRepositoryPanel';
 
 const SUITES = [
-  { key: 'smoke', label: 'Smoke' },
-  { key: 'full_regression', label: 'Full Regression' },
   { key: 'auth', label: 'Login / Logout' },
   { key: 'dashboard', label: 'Dashboard' },
   { key: 'navigation', label: 'Navigation' },
@@ -50,7 +48,7 @@ export default function LiveHealingView() {
             ))}
           </div>
           <button
-            onClick={() => start(history.suite || 'smoke')}
+            onClick={() => start(history.suite || 'auth')}
             className="btn-primary bg-purple-600 hover:bg-purple-500"
           >
             Run Regression
@@ -67,7 +65,7 @@ export default function LiveHealingView() {
             failures={failures}
             timeline={timeline}
             reportStats={reportStats}
-            onStart={() => start(history.suite || 'smoke')}
+            onStart={() => start(history.suite || 'auth')}
             onReset={reset}
             startLabel="Run Regression"
             idleHint="Connecting..."
