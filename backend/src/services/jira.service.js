@@ -56,19 +56,6 @@ async function fetchActiveSprintIssues() {
   }
 }
 
-// Step 1 of the Coverage Intelligence Agent: active sprint issues, filtered to
-// configurable "testable" statuses (Done/Closed/Resolved/Ready for Testing by
-// default), with full metadata for Step 2. Story/Bug/Task/Sub-task all included
-// here for sprint-level counts; the deep per-issue pipeline only runs on
-// config.jira.analysisIssueTypes (Story/Bug by default).
-async function fetchTestableSprintIssues() {
-  const { issues, sprint } = await fetchActiveSprintIssues();
-  const testable = (issues || []).filter((issue) =>
-    config.jira.testableStatuses.some((s) => s.toLowerCase() === (issue.status || '').toLowerCase())
-  );
-  return { issues: testable, sprint };
-}
-
 async function fetchBugsAndFailures() {
   try {
     const jql = `project = ${config.jira.projectKey} AND issuetype = Bug AND status != Done ORDER BY created DESC`;
@@ -154,72 +141,7 @@ function mapIssue(issue) {
   };
 }
 
-// Flattens an Atlassian Document Format (ADF) description into plain text
-function extractPlainText(adf) {
-  if (!adf || !adf.content) return '';
-  const parts = [];
-  const walk = (node) => {
-    if (!node) return;
-    if (node.type === 'text' && node.text) parts.push(node.text);
-    if (Array.isArray(node.content)) node.content.forEach(walk);
-  };
-  adf.content.forEach(walk);
-  return parts.join(' ').trim();
-}
-
-// Acceptance Criteria isn't a standard Jira field — heuristically pull a labeled
-// section out of the description; otherwise the full description is passed to
-// the LLM anyway with a note that AC may be embedded in it.
-function extractAcceptanceCriteria(descriptionText) {
-  if (!descriptionText) return '';
-  const match = descriptionText.match(/acceptance criteria[:\-\s]*([\s\S]*?)(?:\n\n|$)/i);
-  return match ? match[1].trim() : '';
-}
-
-function mapIssueDetailed(issue) {
-  const fields = issue.fields || {};
-  const descriptionText = fields.description?.content
-    ? extractPlainText(fields.description)
-    : (typeof fields.description === 'string' ? fields.description : '');
-
-  return {
-    id: issue.id,
-    key: issue.key,
-    summary: fields.summary,
-    type: fields.issuetype?.name || 'Unknown',
-    status: fields.status?.name || 'Unknown',
-    priority: fields.priority?.name || 'Medium',
-    assignee: fields.assignee?.displayName || 'Unassigned',
-    sprint: fields.sprint?.name || (Array.isArray(fields.sprint) ? fields.sprint[0]?.name : null) || null,
-    description: descriptionText,
-    acceptanceCriteria: extractAcceptanceCriteria(descriptionText),
-    labels: fields.labels || [],
-    components: (fields.components || []).map((c) => c.name),
-    fixVersions: (fields.fixVersions || []).map((v) => v.name),
-    linkedIssues: (fields.issuelinks || []).map((link) => {
-      const linked = link.outwardIssue || link.inwardIssue;
-      return linked ? {
-        key: linked.key,
-        summary: linked.fields?.summary,
-        type: link.type?.name || 'relates to',
-        direction: link.outwardIssue ? 'outward' : 'inward',
-      } : null;
-    }).filter(Boolean),
-    url: `${config.jira.baseUrl}/browse/${issue.key}`,
-  };
-}
-
 const DETAIL_FIELDS = 'summary,description,status,priority,assignee,issuetype,sprint,labels,components,fixVersions,issuelinks';
-
-async function fetchIssueDetails(issueKey) {
-  try {
-    const res = await jiraClient.get(`/issue/${issueKey}`, { params: { fields: DETAIL_FIELDS } });
-    return mapIssueDetailed(res.data);
-  } catch (err) {
-    console.error(`[Jira] fetchIssueDetails(${issueKey}) error:`, err.message);
-    return null;
-  }
-}
 
 async function cacheJiraIssues(issues, context) {
   const db = getDatabase();
@@ -251,5 +173,4 @@ function getCachedIssues() {
 
 module.exports = {
   fetchActiveSprintIssues, fetchBugsAndFailures, fetchAllIssues, createJiraIssue, addCommentToIssue,
-  fetchTestableSprintIssues, fetchIssueDetails, mapIssueDetailed,
 };

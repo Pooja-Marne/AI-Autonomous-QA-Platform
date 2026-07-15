@@ -67,15 +67,6 @@ export const triggersApi = {
   pollNow: () => api.post('/triggers/poll'),
 };
 
-export const coverageApi = {
-  getAnalyses: (params) => api.get('/coverage/analyses', { params }),
-  getAnalysis: (jiraKey, params) => api.get(`/coverage/analyses/${jiraKey}`, { params }),
-  analyzeIssue: (jiraKey) => api.post('/coverage/analyze', { jiraKey }),
-  analyzeSprint: () => api.post('/coverage/analyze-sprint'),
-  getStatus: () => api.get('/coverage/status'),
-  getSprintSummary: (params) => api.get('/coverage/sprint-summary', { params }),
-};
-
 export const locatorsApi = {
   getAll: () => api.get('/locators'),
   approve: (id, body) => api.post(`/locators/${id}/approve`, body),

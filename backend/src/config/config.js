@@ -23,8 +23,6 @@ module.exports = {
     projectKey: process.env.JIRA_PROJECT_KEY || 'SCRUM',
     testableStatuses: (process.env.JIRA_TESTABLE_STATUSES || 'Done,Closed,Resolved,Ready for Testing')
       .split(',').map((s) => s.trim()).filter(Boolean),
-    analysisIssueTypes: (process.env.JIRA_ANALYSIS_ISSUE_TYPES || 'Story,Bug')
-      .split(',').map((s) => s.trim()).filter(Boolean),
   },
   automation: {
     repoPath: process.env.AUTOMATION_REPO_PATH || path.resolve(__dirname, '..', '..', '..', 'tests'),

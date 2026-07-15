@@ -204,75 +204,7 @@ function initializeSchema(db) {
       FOREIGN KEY (run_id) REFERENCES test_runs(id)
     );
 
-    -- Coverage Intelligence Agent: per-issue analysis (Jira x Git x Automation x AI)
-    CREATE TABLE IF NOT EXISTS coverage_analyses (
-      id TEXT PRIMARY KEY,
-      jira_key TEXT NOT NULL,
-      jira_type TEXT,
-      summary TEXT,
-      description TEXT,
-      acceptance_criteria TEXT,
-      labels TEXT,
-      components TEXT,
-      linked_issues TEXT,
-      sprint TEXT,
-      fix_version TEXT,
-      status TEXT,
-      changed_modules TEXT,
-      changed_apis TEXT,
-      changed_ui_pages TEXT,
-      changed_db_objects TEXT,
-      commits TEXT,
-      prs TEXT,
-      authors TEXT,
-      coverage_status TEXT,
-      existing_test_cases TEXT,
-      missing_test_cases TEXT,
-      suggested_test_cases TEXT,
-      automation_effort TEXT,
-      automation_priority TEXT,
-      automation_risk TEXT,
-      recommended_regression_suites TEXT,
-      regression_reason TEXT,
-      release_risk TEXT,
-      defect_risk TEXT,
-      change_impact TEXT,
-      confidence_score REAL,
-      automation_coverage_pct REAL,
-      ai_recommendations TEXT,
-      overall_readiness TEXT,
-      ai_generated INTEGER DEFAULT 0,
-      analyzed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-
-    -- Coverage Intelligence Agent: per-sprint rollup
-    CREATE TABLE IF NOT EXISTS sprint_summaries (
-      id TEXT PRIMARY KEY,
-      sprint_name TEXT,
-      stories_closed INTEGER DEFAULT 0,
-      bugs_closed INTEGER DEFAULT 0,
-      stories_with_automation INTEGER DEFAULT 0,
-      stories_without_automation INTEGER DEFAULT 0,
-      automation_coverage_pct REAL,
-      recommended_new_test_cases TEXT,
-      regression_suites_to_execute TEXT,
-      high_risk_modules TEXT,
-      release_readiness_score REAL,
-      ai_recommendation TEXT,
-      can_release TEXT,
-      reason TEXT,
-      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
   `);
-
-  // Additive migration: pending_triggers predates the Coverage Intelligence Agent
-  const pendingTriggerCols = db.prepare('PRAGMA table_info(pending_triggers)').all().map((c) => c.name);
-  if (!pendingTriggerCols.includes('coverage_status')) {
-    db.exec('ALTER TABLE pending_triggers ADD COLUMN coverage_status TEXT');
-    db.exec('ALTER TABLE pending_triggers ADD COLUMN coverage_analysis_id TEXT');
-    db.exec('ALTER TABLE pending_triggers ADD COLUMN recommended_suite TEXT');
-    db.exec('ALTER TABLE pending_triggers ADD COLUMN coverage_summary TEXT');
-  }
 
   // The automation repo is UI-only — no real 'api'/'ui' tagged suite exists.
   // Migrate any schedules seeded before this was known.

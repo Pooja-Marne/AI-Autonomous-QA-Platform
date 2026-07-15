@@ -9,7 +9,6 @@ import RunDetails from './pages/RunDetails';
 import Analytics from './pages/Analytics';
 import AIHealingPage from './pages/AIHealingPage';
 import JiraPage from './pages/JiraPage';
-import CoveragePage from './pages/CoveragePage';
 import { triggersApi } from './services/api';
 
 function AppShell() {
@@ -55,7 +54,6 @@ function AppShell() {
             <Route path="/analytics" element={<Analytics />} />
             <Route path="/healing" element={<AIHealingPage />} />
             <Route path="/jira" element={<JiraPage />} />
-            <Route path="/coverage" element={<CoveragePage />} />
           </Routes>
         </div>
       </main>
