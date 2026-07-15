@@ -1,11 +1,10 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, PlayCircle, BarChart3, Wrench, Trello, Zap } from 'lucide-react';
+import { LayoutDashboard, PlayCircle, Wrench, Trello, Zap } from 'lucide-react';
 import clsx from 'clsx';
 
 const nav = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/runs', label: 'Test Runs', icon: PlayCircle },
-  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/healing', label: 'AI Healing', icon: Wrench },
   { to: '/jira', label: 'Jira', icon: Trello },
 ];

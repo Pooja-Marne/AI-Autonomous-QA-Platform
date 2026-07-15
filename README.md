@@ -7,7 +7,7 @@ An AI-powered self-healing QA automation platform that integrates with **Jira**,
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    React Dashboard (Port 3002)           │
-│  Dashboard | Test Runs | Analytics | Healing | Jira | GitHub │
+│  Dashboard | Test Runs | Healing | Jira | GitHub          │
 └────────────────────┬────────────────────────────────────┘
                      │ HTTP / REST API
 ┌────────────────────▼────────────────────────────────────┐
@@ -38,7 +38,7 @@ An AI-powered self-healing QA automation platform that integrates with **Jira**,
 - **AI Self-Healing**: GPT-4.1 classifies failures (locator/API/data/env/timeout) and auto-heals
 - **Reporting**: Per-run reports with root cause analysis, Jira & Git links
 - **Slack Notifications**: Run completion alerts with pass/fail/healed counts
-- **Dashboard UI**: Real-time dashboard with analytics, charts, healing center
+- **Dashboard UI**: Real-time dashboard with healing center
 
 ## Quick Start
 
@@ -88,7 +88,6 @@ Open the dashboard at http://localhost:3002 and click **"Run Tests"**.
 | GET | `/api/github/prs` | Fetch open PRs |
 | POST | `/api/healing/analyze` | Analyze a failure with AI |
 | POST | `/api/healing/heal/:id` | Trigger healing for a test case |
-| GET | `/api/reports/analytics` | Get analytics data |
 | GET/POST | `/api/scheduler` | Manage cron schedules |
 
 ## Test Suites

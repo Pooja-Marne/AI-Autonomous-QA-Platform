@@ -1,17 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { getReportByRunId, generateReport, getAnalytics } = require('../services/reporting.service');
+const { getReportByRunId, generateReport } = require('../services/reporting.service');
 const { getDatabase } = require('../config/database');
-
-router.get('/analytics', async (req, res) => {
-  try {
-    const { days = 30 } = req.query;
-    const analytics = await getAnalytics({ days: parseInt(days) });
-    res.json({ success: true, data: analytics });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 router.get('/', (req, res) => {
   const db = getDatabase();

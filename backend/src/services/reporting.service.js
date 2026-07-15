@@ -189,35 +189,4 @@ async function getReportByRunId(runId) {
   };
 }
 
-async function getAnalytics({ days = 30 } = {}) {
-  const db = getDatabase();
-
-  const runTrend = db.prepare(`
-    SELECT date(created_at) as date, COUNT(*) as runs, SUM(passed) as passed, SUM(failed) as failed, SUM(healed) as healed
-    FROM test_runs WHERE created_at >= datetime('now', '-${days} days') AND status NOT IN ('running','pending')
-    GROUP BY date(created_at) ORDER BY date
-  `).all();
-
-  const moduleStability = db.prepare(`
-    SELECT module, COUNT(*) as total_runs, SUM(CASE WHEN status='passed' THEN 1 ELSE 0 END) as passed,
-    SUM(CASE WHEN status IN ('failed','healed') THEN 1 ELSE 0 END) as failed
-    FROM test_cases GROUP BY module ORDER BY failed DESC
-  `).all();
-
-  const healingTrend = db.prepare(`
-    SELECT date(created_at) as date, COUNT(*) as total_healed, AVG(confidence_score) as avg_confidence
-    FROM healing_actions WHERE success = 1 AND created_at >= datetime('now', '-${days} days')
-    GROUP BY date(created_at) ORDER BY date
-  `).all();
-
-  const topFailures = db.prepare(`
-    SELECT name, module, COUNT(*) as failure_count,
-    SUM(CASE WHEN healing_status = 'healed' THEN 1 ELSE 0 END) as healed_count
-    FROM test_cases WHERE status IN ('failed', 'healed')
-    GROUP BY name ORDER BY failure_count DESC LIMIT 10
-  `).all();
-
-  return { runTrend, moduleStability, healingTrend, topFailures };
-}
-
-module.exports = { generateReport, getReportByRunId, getAnalytics };
+module.exports = { generateReport, getReportByRunId };

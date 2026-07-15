@@ -6,7 +6,6 @@ import LiveHealingModal from './components/healing/LiveHealingModal';
 import Dashboard from './pages/Dashboard';
 import TestRuns from './pages/TestRuns';
 import RunDetails from './pages/RunDetails';
-import Analytics from './pages/Analytics';
 import AIHealingPage from './pages/AIHealingPage';
 import JiraPage from './pages/JiraPage';
 import { triggersApi } from './services/api';
@@ -51,7 +50,6 @@ function AppShell() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/runs" element={<TestRuns />} />
             <Route path="/runs/:id" element={<RunDetails />} />
-            <Route path="/analytics" element={<Analytics />} />
             <Route path="/healing" element={<AIHealingPage />} />
             <Route path="/jira" element={<JiraPage />} />
           </Routes>

@@ -49,7 +49,6 @@ export const reportsApi = {
   getAll: () => api.get('/reports'),
   getByRunId: (runId) => api.get(`/reports/${runId}`),
   generate: (runId) => api.post(`/reports/generate/${runId}`),
-  getAnalytics: (params) => api.get('/reports/analytics', { params }),
 };
 
 export const schedulerApi = {
