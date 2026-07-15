@@ -51,7 +51,7 @@ export default function LiveHealingView() {
             onClick={() => start(history.suite || 'auth')}
             className="btn-primary bg-purple-600 hover:bg-purple-500"
           >
-            Run Regression
+            Run Suite
           </button>
         </div>
       )}
@@ -67,7 +67,7 @@ export default function LiveHealingView() {
             reportStats={reportStats}
             onStart={() => start(history.suite || 'auth')}
             onReset={reset}
-            startLabel="Run Regression"
+            startLabel="Run Suite"
             idleHint="Connecting..."
           />
           <p className="text-xs text-gray-500 flex items-center gap-1.5">

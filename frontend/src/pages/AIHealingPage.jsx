@@ -6,7 +6,7 @@ import HealingDemoView from './healing/HealingDemoView';
 
 const MODES = [
   { key: 'live', label: 'Live' },
-  { key: 'scripted', label: 'Scripted Demo' },
+  { key: 'scripted', label: 'Existing Code' },
 ];
 
 export default function AIHealingPage() {
