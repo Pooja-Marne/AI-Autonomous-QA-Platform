@@ -6,9 +6,14 @@ import { runsApi } from '../services/api';
 // switch between previous runs of that suite, and loads full detail
 // (test cases, real self-healing records, runtime logs) for whichever run
 // is selected.
+const PAGE_SIZE = 10;
+
 export function useSuiteExecutionHistory() {
   const [suite, setSuite] = useState(null);
   const [executions, setExecutions] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selectedRunId, setSelectedRunId] = useState(null);
   const [detail, setDetail] = useState(null);
   const [loadingList, setLoadingList] = useState(false);
@@ -36,18 +41,38 @@ export function useSuiteExecutionHistory() {
     setError(null);
     setDetail(null);
     setSelectedRunId(null);
+    setPage(1);
     try {
-      const res = await runsApi.getBySuite(suiteKey, { limit: 10 });
+      const res = await runsApi.getBySuite(suiteKey, { limit: PAGE_SIZE, page: 1 });
       const runs = res.data || [];
       setExecutions(runs);
+      setTotal(res.total ?? runs.length);
       if (runs.length) await loadDetail(runs[0].id);
     } catch (err) {
       setError(err.message);
       setExecutions([]);
+      setTotal(0);
     } finally {
       setLoadingList(false);
     }
   }, [loadDetail]);
+
+  // Fetches the next page and appends — a "Load More" click, not a replace.
+  const loadMore = useCallback(async () => {
+    if (!suite || loadingMore) return;
+    const nextPage = page + 1;
+    setLoadingMore(true);
+    try {
+      const res = await runsApi.getBySuite(suite, { limit: PAGE_SIZE, page: nextPage });
+      setExecutions((prev) => [...prev, ...(res.data || [])]);
+      setTotal(res.total ?? total);
+      setPage(nextPage);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [suite, page, loadingMore, total]);
 
   // Requirement: the page shows the latest execution by default when opened,
   // before the user has clicked anything.
@@ -58,11 +83,13 @@ export function useSuiteExecutionHistory() {
         const { data: latest } = await runsApi.getLatest();
         if (!latest) return;
         if (latest.suite) {
-          const { data: runs } = await runsApi.getBySuite(latest.suite, { limit: 10 });
+          const res = await runsApi.getBySuite(latest.suite, { limit: PAGE_SIZE, page: 1 });
           setSuite(latest.suite);
-          setExecutions(runs || []);
+          setExecutions(res.data || []);
+          setTotal(res.total ?? (res.data || []).length);
         } else {
           setExecutions([latest]);
+          setTotal(1);
         }
         await loadDetail(latest.id);
       } catch {
@@ -80,8 +107,9 @@ export function useSuiteExecutionHistory() {
   }, [suite, selectSuite]);
 
   return {
-    suite, executions, selectedRunId, detail,
+    suite, executions, total, hasMore: executions.length < total, loadingMore,
+    selectedRunId, detail,
     loadingList, loadingDetail, error,
-    selectSuite, selectRun: loadDetail, refresh,
+    selectSuite, selectRun: loadDetail, refresh, loadMore,
   };
 }

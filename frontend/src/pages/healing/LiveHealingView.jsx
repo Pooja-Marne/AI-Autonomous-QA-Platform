@@ -100,6 +100,15 @@ export default function LiveHealingView() {
                 <div className="mt-1 uppercase text-[10px] tracking-wide text-gray-500">{run.status?.replace(/_/g, ' ')}</div>
               </button>
             ))}
+            {history.hasMore && (
+              <button
+                onClick={history.loadMore}
+                disabled={history.loadingMore}
+                className="w-full text-center px-3 py-2 rounded-lg text-xs text-gray-500 hover:text-gray-300 hover:bg-gray-800/40 transition-colors disabled:opacity-50"
+              >
+                {history.loadingMore ? 'Loading...' : `Load more (${history.executions.length} of ${history.total})`}
+              </button>
+            )}
           </div>
 
           <SuiteExecutionDetail detail={history.detail} loading={history.loadingDetail} error={history.error} />

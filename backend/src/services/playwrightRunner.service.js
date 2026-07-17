@@ -438,9 +438,12 @@ async function getRunById(runId) {
 // Latest-first execution history for a given suite key (e.g. 'smoke',
 // 'login', 'full_regression') — powers the AI Healing page's "click a
 // suite, see its most recent runs" browsing view.
-async function getRunsBySuite(suite, { limit = 10 } = {}) {
+async function getRunsBySuite(suite, { limit = 10, page = 1 } = {}) {
   const db = getDatabase();
-  return db.prepare('SELECT * FROM test_runs WHERE suite = ? ORDER BY created_at DESC LIMIT ?').all(suite, limit);
+  const offset = (page - 1) * limit;
+  const runs = db.prepare('SELECT * FROM test_runs WHERE suite = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(suite, limit, offset);
+  const total = db.prepare('SELECT COUNT(*) as count FROM test_runs WHERE suite = ?').get(suite).count;
+  return { runs, total, page, limit };
 }
 
 // Most recent execution across every suite — used to populate the AI

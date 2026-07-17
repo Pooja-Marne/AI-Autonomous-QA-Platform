@@ -28,9 +28,9 @@ router.get('/', async (req, res) => {
 // never actually collides, but keeping it here documents the intent.
 router.get('/by-suite/:suite', async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
-    const runs = await getRunsBySuite(req.params.suite, { limit: parseInt(limit) });
-    res.json({ success: true, data: runs });
+    const { limit = 10, page = 1 } = req.query;
+    const result = await getRunsBySuite(req.params.suite, { limit: parseInt(limit), page: parseInt(page) });
+    res.json({ success: true, data: result.runs, total: result.total, page: result.page, limit: result.limit });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
