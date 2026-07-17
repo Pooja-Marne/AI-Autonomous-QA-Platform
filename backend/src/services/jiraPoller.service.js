@@ -6,11 +6,20 @@ const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 
 const RESOLVED_STATUSES = config.jira.testableStatuses;
-const POLL_INTERVAL = '*/2 * * * *'; // Every 2 minutes
+// Demo-friendly interval — a closed Jira issue should show up as a trigger
+// prompt within seconds, not on the next 2-minute tick. The 10-minute
+// "recently updated" window in pollForResolvedIssues below still comfortably
+// covers this cadence. Configurable via JIRA_POLL_INTERVAL if a slower/
+// cheaper cadence is wanted again outside of demos.
+const POLL_INTERVAL = process.env.JIRA_POLL_INTERVAL || '*/15 * * * * *';
 
 let pollerJob = null;
 let consecutiveFailures = 0;
-const MAX_FAILURES = 1; // Stop auto-polling after first persistent error; manual triggers still work
+// At a 15s cadence a single transient blip is far more likely than at the
+// old 2-minute one — 3 consecutive failures (45s of real trouble) is a
+// better signal of "actually broken" than 1. Manual triggers still work
+// regardless of whether auto-polling has stopped.
+const MAX_FAILURES = 3;
 
 const jiraClient = axios.create({
   baseURL: `${config.jira.baseUrl}/rest/api/3`,
@@ -290,7 +299,7 @@ async function respondToTrigger(triggerId, { decision, suite, customModules }) {
 function initializePoller() {
   if (pollerJob) pollerJob.stop();
   pollerJob = cron.schedule(POLL_INTERVAL, pollForResolvedIssues);
-  console.log('[JiraPoller] Polling for resolved issues every 2 minutes');
+  console.log(`[JiraPoller] Polling for resolved issues on schedule: ${POLL_INTERVAL}`);
   pollForResolvedIssues();
 }
 
