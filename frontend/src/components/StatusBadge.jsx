@@ -21,6 +21,12 @@ const STATUS_CONFIG = {
   fully_covered: { label: '✅ Fully Covered', classes: 'bg-green-500/15 text-green-400 border border-green-500/20' },
   partially_covered: { label: '⚠ Partially Covered', classes: 'bg-yellow-500/15 text-yellow-400 border border-yellow-500/20' },
   no_automation: { label: '❌ No Automation Found', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
+  // Locator Repository lifecycle statuses (backend/src/services/locatorRepository.service.js)
+  pending_approval: { label: 'Pending Approval', classes: 'bg-purple-500/15 text-purple-400 border border-purple-500/20' },
+  approved: { label: 'Approved', classes: 'bg-blue-500/15 text-blue-400 border border-blue-500/20' },
+  resolved: { label: 'Resolved', classes: 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20' },
+  rejected: { label: 'Rejected', classes: 'bg-red-500/15 text-red-400 border border-red-500/20' },
+  superseded_by_deploy: { label: 'Superseded', classes: 'bg-gray-500/15 text-gray-400 border border-gray-500/20' },
 };
 
 export default function StatusBadge({ status, className }) {

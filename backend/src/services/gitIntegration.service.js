@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { buildResolveCallRegex } = require('./pageObjectSource.service');
 
 // Uses the GitHub REST Contents/PRs API rather than shelling out to `git` —
 // the running container has no configured push credentials or guaranteed
@@ -44,11 +45,11 @@ async function createLocatorFixPR({ pageObject, propertyName, originalLocator, h
     const { data: fileData } = await gh.get(`/repos/${GITHUB_REPO}/contents/${filePathRel}`, { params: { ref: branchName } });
     const currentContent = Buffer.from(fileData.content, 'base64').toString('utf-8');
 
-    const propRegex = new RegExp(`(this\\.${propertyName}\\s*=\\s*page\\.locator\\(resolve\\('${pageObject}\\.${propertyName}',\\s*)(['"\`]).*?\\2(\\))`);
+    const propRegex = buildResolveCallRegex({ pageObject, propertyName });
     if (!propRegex.test(currentContent)) {
-      return { success: false, reason: `Could not find this.${propertyName} in ${filePathRel} to patch — no PR created.` };
+      return { success: false, reason: `Could not find resolve('${pageObject}.${propertyName}', ...) in ${filePathRel} to patch — no PR created.` };
     }
-    const updatedContent = currentContent.replace(propRegex, (_m, pre, quote, post) => `${pre}${quote}${healedLocator}${quote}${post}`);
+    const updatedContent = currentContent.replace(propRegex, (_m, cls, prop, quote) => `resolve('${cls}.${prop}', ${quote}${healedLocator}${quote})`);
 
     const { data: commitData } = await gh.put(`/repos/${GITHUB_REPO}/contents/${filePathRel}`, {
       message: `fix(ai-healing): update ${pageObject}.${propertyName} locator\n\n${healingReason || ''}\nConfidence: ${confidenceScore ?? 'n/a'}%\nOld: ${originalLocator}\nNew: ${healedLocator}`,
@@ -73,10 +74,24 @@ async function createLocatorFixPR({ pageObject, propertyName, originalLocator, h
       ].join('\n'),
     });
 
-    return { success: true, commitSha: commitData.commit.sha, prUrl: pr.html_url, branch: branchName };
+    return { success: true, commitSha: commitData.commit.sha, prUrl: pr.html_url, prNumber: pr.number, branch: branchName };
   } catch (err) {
     return { success: false, reason: err.response?.data?.message || err.message };
   }
 }
 
-module.exports = { createLocatorFixPR, isConfigured };
+// Checks a previously-opened PR's current merge state — used by the
+// GitHub merge poller to detect a merge without relying on webhooks.
+async function getPullRequest(prNumber) {
+  const gh = client();
+  const { data } = await gh.get(`/repos/${GITHUB_REPO}/pulls/${prNumber}`);
+  return {
+    number: data.number,
+    merged: data.merged,
+    mergedAt: data.merged_at,
+    mergeCommitSha: data.merge_commit_sha,
+    state: data.state,
+  };
+}
+
+module.exports = { createLocatorFixPR, isConfigured, getPullRequest };

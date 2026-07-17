@@ -18,7 +18,6 @@ try {
   console.error(`[Self-Healing] Could not load tests/test.env (${err.message}) — falling back to the hardcoded default BASE_URL.`);
 }
 
-const PAGES_DIR = path.join(TESTS_DIR, 'playwright', 'pages');
 const ARTIFACTS_DIR = path.join(__dirname, '..', '..', 'data', 'demo-artifacts');
 const CAPTURE_DIR = path.join(TESTS_DIR, 'test-results', 'failure-context');
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8080';
@@ -44,21 +43,10 @@ function extractSelectorFromMessage(message) {
 }
 
 // Finds which Page Object class/property currently defaults to a selector
-// string. Every Page Object wraps its locators in
-// resolve('ClassName.property', 'default-selector') (see
-// tests/playwright/locators/resolve.js), so identifying the owner is a
-// simple, reliable text match on that call shape — no per-locator
-// registration needed for this to work generically.
-function findPageObjectPropertyForSelector(oldSelector) {
-  const files = fs.readdirSync(PAGES_DIR).filter((f) => f.endsWith('.js'));
-  const escaped = oldSelector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  for (const file of files) {
-    const content = fs.readFileSync(path.join(PAGES_DIR, file), 'utf-8');
-    const match = content.match(new RegExp(`resolve\\(\\s*['"\`](\\w+)\\.(\\w+)['"\`]\\s*,\\s*['"\`]${escaped}['"\`]\\s*\\)`));
-    if (match) return { file, className: match[1], propertyName: match[2] };
-  }
-  return null;
-}
+// string — delegates to the shared source-reading module (also used by
+// gitIntegration.service.js and the pre-healing resolution check below) so
+// the `resolve('ClassName.property', 'value')` regex lives in exactly one place.
+const { findOwnerBySelectorValue } = require('./pageObjectSource.service');
 
 // Fallback for when the broken value never matches any Page Object's
 // hardcoded default — e.g. the break came from a runtime DOM mutation
@@ -515,6 +503,33 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
     return record;
   }
 
+  // Before spending a browser session + LLM call: has this exact locator
+  // already been healed, approved, and merged into the current checked-out
+  // source? If so, the failure is stale (the environment under test just
+  // hasn't picked up the fix yet) — mark the repository entry resolved and
+  // skip re-healing rather than opening a duplicate healing cycle for a fix
+  // that already exists in source.
+  const preHealOwner = findOwnerBySelectorValue(oldLocator) || findPageObjectPropertyFromStackTrace(stackTrace);
+  if (preHealOwner) {
+    const { findActiveLocatorRepositoryRow, resolveIfSourceMatches } = require('./locatorRepository.service');
+    const activeRow = findActiveLocatorRepositoryRow(preHealOwner.className, preHealOwner.propertyName);
+    if (activeRow && resolveIfSourceMatches(activeRow, 'pre_healing_source_check')) {
+      log(`Source already contains the healed locator for ${preHealOwner.className}.${preHealOwner.propertyName} — marking resolved and skipping healing.`, 'done');
+      const record = {
+        id: uuidv4(), runId, locatorKey: `${preHealOwner.className}.${preHealOwner.propertyName}`, testFile, failedTests: failedTestNames,
+        oldLocator, newLocator: activeRow.healed_locator,
+        rootCause: 'Fix already present in current source (PR merged/deployed) — healing skipped.',
+        confidenceScore: activeRow.confidence_score, liveVerified: true,
+        healingStatus: 'already_resolved', retryStatus: 'skipped',
+        screenshotPath: null, tracePath: null, domSnapshotPath: null,
+        timeTakenMs: timeTakenMs(), logs, failureType: classification.failureType, attempts: 0,
+      };
+      persistDemoHealingRun(record);
+      if (runId) activeCycles.delete(runId);
+      return record;
+    }
+  }
+
   const modulePath = path.join(TESTS_DIR, 'node_modules', '@playwright', 'test');
   const { chromium } = require(modulePath);
   // --no-sandbox/--disable-dev-shm-usage: without these, Chromium's sandbox
@@ -621,7 +636,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
         // code's default is still correct in that case, so it never
         // string-matches, but the stack trace still tells us exactly which
         // property was being accessed.
-        const owner = findPageObjectPropertyForSelector(currentOldLocator) || findPageObjectPropertyFromStackTrace(currentStackTrace);
+        const owner = findOwnerBySelectorValue(currentOldLocator) || findPageObjectPropertyFromStackTrace(currentStackTrace);
         if (!owner) {
           log(`Found a live-verified replacement, but "${currentOldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`, 'done');
           record = {

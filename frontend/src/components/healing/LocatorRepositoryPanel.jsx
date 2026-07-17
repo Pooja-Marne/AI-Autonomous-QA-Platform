@@ -1,23 +1,19 @@
 import { useEffect, useState } from 'react';
-import { Database, CheckCircle2, XCircle, GitPullRequest, Clock } from 'lucide-react';
+import { Database, CheckCircle2, XCircle, GitPullRequest, Clock, ChevronDown, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import { locatorsApi } from '../../services/api';
-
-const SOURCE_CONFIG = {
-  pending_approval: { label: 'Healed Repository', className: 'text-purple-400' },
-  approved: { label: 'Healed Repository', className: 'text-green-400' },
-};
+import StatusBadge from '../StatusBadge';
+import LocatorLifecycleStepper from './LocatorLifecycleStepper';
 
 const GIT_STATUS_LABEL = {
   not_started: 'Not started',
   pr_open: 'PR Open',
   pr_merged: 'Merged',
+  pr_closed_unmerged: 'Closed (not merged)',
   failed: 'Failed',
 };
 
 function LocatorCard({ locator, onApprove, onReject, busy }) {
-  const source = SOURCE_CONFIG[locator.status] || { label: 'Runtime Healing', className: 'text-blue-400' };
-
   return (
     <div className="glass-card border border-purple-500/10 overflow-hidden">
       <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2 border-b border-gray-800/60">
@@ -26,13 +22,17 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
             <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">
               {locator.page_object}.{locator.property_name}
             </span>
-            <span className={clsx('text-xs font-medium', source.className)}>✓ Current Source: {source.label}</span>
+            <StatusBadge status={locator.status} />
             <span className="text-xs text-gray-500">v{locator.version}</span>
           </div>
         </div>
         <span className="text-xs text-gray-500 flex items-center gap-1 flex-shrink-0">
           <Clock className="w-3 h-3" /> {new Date(locator.created_at).toLocaleDateString()}
         </span>
+      </div>
+
+      <div className="px-4 pt-3">
+        <LocatorLifecycleStepper locator={locator} />
       </div>
 
       <div className="px-4 pb-4 space-y-3 pt-3">
@@ -59,8 +59,8 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
           </div>
           <div className="bg-gray-800/40 rounded-lg p-2.5">
             <p className="text-xs text-gray-500">Git Status</p>
-            <p className={clsx('text-sm font-semibold', locator.git_status === 'pr_open' ? 'text-blue-400' : locator.git_status === 'failed' ? 'text-red-400' : 'text-gray-400')}>
-              {locator.status === 'pending_approval' ? 'Pending Approval' : (GIT_STATUS_LABEL[locator.git_status] || locator.git_status)}
+            <p className={clsx('text-sm font-semibold', locator.git_status === 'pr_open' ? 'text-blue-400' : locator.git_status === 'pr_merged' ? 'text-emerald-400' : locator.git_status === 'failed' || locator.git_status === 'pr_closed_unmerged' ? 'text-red-400' : 'text-gray-400')}>
+              {GIT_STATUS_LABEL[locator.git_status] || locator.git_status}
             </p>
           </div>
         </div>
@@ -69,6 +69,17 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
           <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
             <p className="text-xs font-medium text-purple-400 mb-1">Healing Reason</p>
             <p className="text-xs text-purple-200">{locator.healing_reason}</p>
+          </div>
+        )}
+
+        {locator.status === 'resolved' && (
+          <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+            <p className="text-xs font-medium text-emerald-400 mb-1">
+              Resolved{locator.resolved_at ? ` — ${new Date(locator.resolved_at).toLocaleString()}` : ''}
+            </p>
+            <p className="text-xs text-emerald-200">
+              Confirmed active in current source{locator.resolution_reason ? ` (${locator.resolution_reason})` : ''}.
+            </p>
           </div>
         )}
 
@@ -110,6 +121,8 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
 
 export default function LocatorRepositoryPanel() {
   const [locators, setLocators] = useState([]);
+  const [resolvedLocators, setResolvedLocators] = useState([]);
+  const [showResolved, setShowResolved] = useState(false);
   const [gitConfigured, setGitConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
@@ -120,6 +133,7 @@ export default function LocatorRepositoryPanel() {
     try {
       const res = await locatorsApi.getAll();
       setLocators(res.data || []);
+      setResolvedLocators(res.resolved || []);
       setGitConfigured(res.gitIntegrationConfigured !== false);
     } finally {
       setLoading(false);
@@ -154,7 +168,7 @@ export default function LocatorRepositoryPanel() {
   };
 
   if (loading) return null;
-  if (locators.length === 0) return null;
+  if (locators.length === 0 && resolvedLocators.length === 0) return null;
 
   return (
     <div className="space-y-3">
@@ -168,11 +182,36 @@ export default function LocatorRepositoryPanel() {
       {message && (
         <p className={clsx('text-xs', message.type === 'success' ? 'text-green-400' : message.type === 'warn' ? 'text-yellow-400' : 'text-red-400')}>{message.text}</p>
       )}
+
       <div className="space-y-2">
-        {locators.map((loc) => (
-          <LocatorCard key={loc.id} locator={loc} onApprove={handleApprove} onReject={handleReject} busy={busyId === loc.id} />
-        ))}
+        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Healing ({locators.length})</p>
+        {locators.length === 0 ? (
+          <p className="text-xs text-gray-600">No unresolved locator fixes — everything active is confirmed in source or awaiting no further action.</p>
+        ) : (
+          locators.map((loc) => (
+            <LocatorCard key={loc.id} locator={loc} onApprove={handleApprove} onReject={handleReject} busy={busyId === loc.id} />
+          ))
+        )}
       </div>
+
+      {resolvedLocators.length > 0 && (
+        <div className="space-y-2">
+          <button
+            onClick={() => setShowResolved((v) => !v)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-300"
+          >
+            {showResolved ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            Resolved / History ({resolvedLocators.length})
+          </button>
+          {showResolved && (
+            <div className="space-y-2">
+              {resolvedLocators.map((loc) => (
+                <LocatorCard key={loc.id} locator={loc} onApprove={handleApprove} onReject={handleReject} busy={busyId === loc.id} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

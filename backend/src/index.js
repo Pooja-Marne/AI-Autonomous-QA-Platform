@@ -104,6 +104,8 @@ async function bootstrap() {
     // /api/scheduler routes still exist for direct API use if ever needed.
     initializePoller();
     logger.info('[JiraPoller] Initialized');
+    require('./services/githubMergePoller.service').initializeGithubMergePoller();
+    logger.info('[GithubMergePoller] Initialized');
     app.listen(PORT, () => {
       logger.info(`[Server] AI QA Platform running on http://localhost:${PORT}`);
       logger.info(`[Server] Environment: ${config.server.nodeEnv}`);

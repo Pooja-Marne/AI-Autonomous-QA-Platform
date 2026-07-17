@@ -45,11 +45,8 @@ function checkAndInvalidateOnVersionChange() {
     : (lastKnownVersion === null ? 'First run — no prior version recorded.' : 'Same application version — existing healed locators remain valid.'));
 
   if (changed) {
-    const { changes } = db.prepare(
-      `UPDATE locator_repository SET status = 'superseded_by_deploy' WHERE status IN ('pending_approval', 'approved')`
-    ).run();
-    console.log(`[LocatorCache] Superseded ${changes} active locator entr${changes === 1 ? 'y' : 'ies'} from the previous build.`);
-    syncRuntimeCache();
+    const { resolvedCount, supersededCount } = reconcileLocatorRepositoryAgainstSource();
+    console.log(`[LocatorCache] Reconciled active locators against current source: ${resolvedCount} resolved (fix confirmed in source), ${supersededCount} superseded (fix not found in source).`);
   }
 
   db.prepare(`
@@ -105,6 +102,49 @@ function syncRuntimeCache() {
   return cache;
 }
 
+// The single place that ever flips a row to 'resolved' — checks whether the
+// CURRENT checked-out Page Object source already contains this exact healed
+// value. If so, the fix has been merged/deployed and is now permanently part
+// of source: mark it resolved (excluding it from the runtime cache via the
+// status filter above) so it stops being suggested/served, while keeping the
+// row itself for audit history. Returns false (no-op) if source doesn't
+// match yet — the row stays active.
+function resolveIfSourceMatches(row, reason) {
+  const { getCurrentLocatorFromSource } = require('./pageObjectSource.service');
+  const currentValue = getCurrentLocatorFromSource(row.page_object, row.property_name);
+  if (currentValue !== row.healed_locator) return false;
+
+  const db = getDatabase();
+  db.prepare(`
+    UPDATE locator_repository SET status = 'resolved', resolution_reason = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?
+  `).run(reason, row.id);
+  syncRuntimeCache();
+  return true;
+}
+
+// Per-row replacement for the old blanket "supersede everything active"
+// behavior: each active row is checked against what its OWN specific
+// page_object+property currently resolves to in source. Only a row whose
+// fix isn't (yet) confirmed in source gets superseded — a row whose fix IS
+// confirmed gets marked resolved instead of being wrongly treated as stale
+// just because some unrelated commit landed.
+function reconcileLocatorRepositoryAgainstSource() {
+  const db = getDatabase();
+  const activeRows = db.prepare(`SELECT * FROM locator_repository WHERE status IN ('pending_approval', 'approved')`).all();
+  let resolvedCount = 0;
+  let supersededCount = 0;
+  for (const row of activeRows) {
+    if (resolveIfSourceMatches(row, 'source_confirmed_on_deploy')) {
+      resolvedCount++;
+    } else {
+      db.prepare(`UPDATE locator_repository SET status = 'superseded_by_deploy' WHERE id = ?`).run(row.id);
+      supersededCount++;
+    }
+  }
+  if (resolvedCount || supersededCount) syncRuntimeCache();
+  return { resolvedCount, supersededCount };
+}
+
 // Records a new healing event. Always creates a NEW row (never overwrites) —
 // version = how many times this exact page_object+property has been healed,
 // giving full history for free. Immediately syncs the runtime cache so the
@@ -150,6 +190,17 @@ function getLocatorById(id) {
   return db.prepare(`SELECT * FROM locator_repository WHERE id = ?`).get(id) || null;
 }
 
+// Latest still-active (unresolved) row for a given page_object+property —
+// used by the pre-healing check (is there already an in-flight/approved fix
+// for this exact locator?) and the GitHub merge poller.
+function findActiveLocatorRepositoryRow(pageObject, propertyName) {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT * FROM locator_repository WHERE page_object = ? AND property_name = ?
+      AND status IN ('pending_approval', 'approved') ORDER BY version DESC LIMIT 1
+  `).get(pageObject, propertyName) || null;
+}
+
 // Hard-deletes one row (unlike reject, which just changes status and keeps
 // history) — for pruning a single bad/test entry without wiping everything.
 function deleteLocator(id) {
@@ -174,15 +225,42 @@ function clearAllLocators() {
 }
 
 // One row per page_object+property, showing only the latest version, for
-// the dashboard's summary list — with the full version history attached.
+// the dashboard's "Active Healing" list — only unresolved locators (still
+// pending_approval or approved, i.e. not yet confirmed merged into source,
+// not rejected). Resolved/rejected/superseded history lives in
+// listResolvedLocators() below, kept out of this list so a merged fix stops
+// being shown as if it were still pending.
 function listActiveLocators() {
   const db = getDatabase();
   const latest = db.prepare(`
     SELECT lr.* FROM locator_repository lr
-    WHERE lr.version = (
-      SELECT MAX(version) FROM locator_repository lr2
-      WHERE lr2.page_object = lr.page_object AND lr2.property_name = lr.property_name
-    )
+    WHERE lr.status IN ('pending_approval', 'approved')
+      AND lr.version = (
+        SELECT MAX(version) FROM locator_repository lr2
+        WHERE lr2.page_object = lr.page_object AND lr2.property_name = lr.property_name
+      )
+    ORDER BY lr.created_at DESC
+  `).all();
+
+  return latest.map((row) => ({
+    ...row,
+    history: db.prepare(
+      `SELECT * FROM locator_repository WHERE page_object = ? AND property_name = ? ORDER BY version DESC`
+    ).all(row.page_object, row.property_name),
+  }));
+}
+
+// Mirror of listActiveLocators for terminal-state rows — the dashboard's
+// audit-trail "Resolved / History" section.
+function listResolvedLocators() {
+  const db = getDatabase();
+  const latest = db.prepare(`
+    SELECT lr.* FROM locator_repository lr
+    WHERE lr.status IN ('resolved', 'rejected', 'superseded_by_deploy')
+      AND lr.version = (
+        SELECT MAX(version) FROM locator_repository lr2
+        WHERE lr2.page_object = lr.page_object AND lr2.property_name = lr.property_name
+      )
     ORDER BY lr.created_at DESC
   `).all();
 
@@ -217,23 +295,27 @@ async function approveLocator(id, { approvedBy = 'dashboard-user' } = {}) {
   });
 
   if (gitResult.success) {
-    return updateGitStatus(id, { gitStatus: 'pr_open', commitSha: gitResult.commitSha, prUrl: gitResult.prUrl });
+    return updateGitStatus(id, {
+      gitStatus: 'pr_open', commitSha: gitResult.commitSha, prUrl: gitResult.prUrl, prNumber: gitResult.prNumber,
+    });
   }
   db.prepare(`UPDATE locator_repository SET git_status = 'failed' WHERE id = ?`).run(id);
   return { ...getLocatorById(id), gitError: gitResult.reason };
 }
 
-function updateGitStatus(id, { gitStatus, commitSha, prUrl }) {
+function updateGitStatus(id, { gitStatus, commitSha, prUrl, prNumber }) {
   const db = getDatabase();
   db.prepare(`
-    UPDATE locator_repository SET git_status = ?, git_commit_sha = COALESCE(?, git_commit_sha), git_pr_url = COALESCE(?, git_pr_url)
+    UPDATE locator_repository SET git_status = ?, git_commit_sha = COALESCE(?, git_commit_sha),
+      git_pr_url = COALESCE(?, git_pr_url), pr_number = COALESCE(?, pr_number)
     WHERE id = ?
-  `).run(gitStatus, commitSha ?? null, prUrl ?? null, id);
+  `).run(gitStatus, commitSha ?? null, prUrl ?? null, prNumber ?? null, id);
   return getLocatorById(id);
 }
 
 module.exports = {
   recordHealedLocator, rejectLocator, approveLocator, updateGitStatus,
-  getLocatorById, listActiveLocators, syncRuntimeCache, RESOLVED_CACHE_PATH,
+  getLocatorById, listActiveLocators, listResolvedLocators, syncRuntimeCache, RESOLVED_CACHE_PATH,
   deleteLocator, clearAllLocators, checkAndInvalidateOnVersionChange, getCurrentAppVersion,
+  findActiveLocatorRepositoryRow, resolveIfSourceMatches, reconcileLocatorRepositoryAgainstSource,
 };

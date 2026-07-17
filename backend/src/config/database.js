@@ -134,8 +134,8 @@ function initializeSchema(db) {
       run_id TEXT,
       demo_healing_run_id TEXT,
       live_verified INTEGER DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'pending_approval', -- pending_approval | approved | rejected | superseded
-      git_status TEXT DEFAULT 'not_started',            -- not_started | committed | pr_open | pr_merged | failed
+      status TEXT NOT NULL DEFAULT 'pending_approval', -- pending_approval | approved | rejected | superseded_by_deploy | resolved
+      git_status TEXT DEFAULT 'not_started',            -- not_started | committed | pr_open | pr_merged | pr_closed_unmerged | failed
       git_commit_sha TEXT,
       git_pr_url TEXT,
       approved_at DATETIME,
@@ -228,6 +228,20 @@ function initializeSchema(db) {
   }
   if (!healingRunCols.includes('attempts')) {
     db.exec('ALTER TABLE demo_healing_runs ADD COLUMN attempts INTEGER');
+  }
+
+  // Additive migration: locator_repository predates PR-merge tracking and
+  // per-locator resolution against current source (see
+  // locatorRepository.service.js's resolveIfSourceMatches()).
+  const locatorCols = db.prepare('PRAGMA table_info(locator_repository)').all().map((c) => c.name);
+  if (!locatorCols.includes('pr_number')) {
+    db.exec('ALTER TABLE locator_repository ADD COLUMN pr_number INTEGER');
+  }
+  if (!locatorCols.includes('resolved_at')) {
+    db.exec('ALTER TABLE locator_repository ADD COLUMN resolved_at DATETIME');
+  }
+  if (!locatorCols.includes('resolution_reason')) {
+    db.exec('ALTER TABLE locator_repository ADD COLUMN resolution_reason TEXT');
   }
 
   // Tracks the last known app version this backend healed locators under —

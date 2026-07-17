@@ -1,14 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const {
-  listActiveLocators, approveLocator, rejectLocator, getLocatorById,
+  listActiveLocators, listResolvedLocators, approveLocator, rejectLocator, getLocatorById,
   deleteLocator, clearAllLocators,
 } = require('../services/locatorRepository.service');
 const { isConfigured: gitConfigured } = require('../services/gitIntegration.service');
 
 router.get('/', async (req, res) => {
   try {
-    res.json({ success: true, data: listActiveLocators(), gitIntegrationConfigured: gitConfigured() });
+    res.json({
+      success: true,
+      data: listActiveLocators(),
+      resolved: listResolvedLocators(),
+      gitIntegrationConfigured: gitConfigured(),
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
