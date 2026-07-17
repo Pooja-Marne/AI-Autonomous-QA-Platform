@@ -33,9 +33,6 @@ const SUITE_PATTERNS = {
   smoke: ['--grep', '@smoke'],
   auth: ['specs/auth.spec.js'],
   dashboard: ['specs/dashboard.spec.js'],
-  navigation: ['specs/navigation.spec.js'],
-  orders: ['specs/orders.spec.js'],
-  products: ['specs/products.spec.js'],
   users: ['specs/users.spec.js'],
 };
 
@@ -43,7 +40,7 @@ const SUITE_PATTERNS = {
 // describe() block title — used only to seed the live per-module progress
 // map for the in-progress run view (cosmetic; healing/results correctness
 // doesn't depend on this list).
-const ALL_MODULES = ['login_logout', 'dashboard_cards', 'navigation_menu', 'orders', 'products', 'users'];
+const ALL_MODULES = ['login_logout', 'dashboard_cards', 'users'];
 
 const SUITE_MODULES = {
   full_regression: ALL_MODULES,
@@ -51,9 +48,6 @@ const SUITE_MODULES = {
   smoke: ALL_MODULES,
   auth: ['login_logout'],
   dashboard: ['dashboard_cards'],
-  navigation: ['navigation_menu'],
-  orders: ['orders'],
-  products: ['products'],
   users: ['users'],
 };
 

@@ -5,10 +5,7 @@ import { runsApi } from '../services/api';
 const PLAYWRIGHT_SUITES = [
   { value: 'auth',            label: 'Login / Logout',        desc: 'playwright/specs/auth.spec.js' },
   { value: 'dashboard',       label: 'Dashboard Cards',       desc: 'playwright/specs/dashboard.spec.js' },
-  { value: 'navigation',      label: 'Navigation Menu',       desc: 'playwright/specs/navigation.spec.js' },
-  { value: 'products',        label: 'Products',              desc: 'playwright/specs/products.spec.js' },
   { value: 'users',           label: 'Users',                 desc: 'playwright/specs/users.spec.js' },
-  { value: 'orders',          label: 'Orders',                desc: 'playwright/specs/orders.spec.js' },
 ];
 
 export default function TriggerRunModal({ onClose, onSuccess }) {

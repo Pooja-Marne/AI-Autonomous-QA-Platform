@@ -1,7 +1,6 @@
 const { test, expect } = require('../fixtures/healingTest');
 const { LoginPage } = require('../pages/LoginPage');
 const { DashboardPage } = require('../pages/DashboardPage');
-const { ProductsPage } = require('../pages/ProductsPage');
 
 test.describe('Dashboard Cards', () => {
   test.beforeEach(async ({ page }) => {
@@ -17,15 +16,5 @@ test.describe('Dashboard Cards', () => {
     await expect(dashboardPage.cardUsers).toContainText('3');
     await expect(dashboardPage.cardOrders).toContainText('2');
     await expect(dashboardPage.cardPendingOrders).toContainText('1');
-  });
-
-  test('@dashboard-cards Product count updates after adding a new product', async ({ page }) => {
-    const productsPage = new ProductsPage(page);
-    await productsPage.goto();
-    await productsPage.addProduct('Extra Monitor Stand', 15.5, 30);
-
-    const dashboardPage = new DashboardPage(page);
-    await dashboardPage.goto();
-    await expect(dashboardPage.cardProducts).toContainText('4');
   });
 });

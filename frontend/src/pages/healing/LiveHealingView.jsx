@@ -11,10 +11,7 @@ import SourceInfoBar from '../../components/healing/SourceInfoBar';
 const SUITES = [
   { key: 'auth', label: 'Login / Logout' },
   { key: 'dashboard', label: 'Dashboard' },
-  { key: 'navigation', label: 'Navigation' },
-  { key: 'products', label: 'Products' },
   { key: 'users', label: 'Users' },
-  { key: 'orders', label: 'Orders' },
 ];
 
 export default function LiveHealingView() {
