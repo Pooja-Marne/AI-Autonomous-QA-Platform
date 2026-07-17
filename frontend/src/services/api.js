@@ -72,4 +72,8 @@ export const locatorsApi = {
   reject: (id) => api.post(`/locators/${id}/reject`),
 };
 
+export const systemApi = {
+  getSourceInfo: () => api.get('/system/source-info'),
+};
+
 export default api;

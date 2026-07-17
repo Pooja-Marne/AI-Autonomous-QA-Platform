@@ -6,6 +6,7 @@ import { useSuiteExecutionHistory } from '../../hooks/useSuiteExecutionHistory';
 import HealingRunView from '../../components/healing/HealingRunView';
 import SuiteExecutionDetail from '../../components/healing/SuiteExecutionDetail';
 import LocatorRepositoryPanel from '../../components/healing/LocatorRepositoryPanel';
+import SourceInfoBar from '../../components/healing/SourceInfoBar';
 
 const SUITES = [
   { key: 'auth', label: 'Login / Logout' },
@@ -29,6 +30,8 @@ export default function LiveHealingView() {
 
   return (
     <div className="space-y-6">
+      {state.phase === 'idle' && <SourceInfoBar />}
+
       {state.phase === 'idle' && (
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-2 flex-wrap">

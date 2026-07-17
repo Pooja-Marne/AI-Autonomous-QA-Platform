@@ -94,4 +94,19 @@ async function getPullRequest(prNumber) {
   };
 }
 
-module.exports = { createLocatorFixPR, isConfigured, getPullRequest };
+// The actual source of truth for "what's the latest commit on the deploy
+// branch" — used to compare against whatever commit a running instance
+// actually has, without needing git inside the container at all (there
+// is no .git in the deployed image — see .dockerignore).
+async function getLatestCommitOnBranch() {
+  const gh = client();
+  const { data } = await gh.get(`/repos/${GITHUB_REPO}/commits/${GITHUB_BASE_BRANCH}`);
+  return {
+    sha: data.sha,
+    author: data.commit.author.name,
+    message: data.commit.message,
+    committedAt: data.commit.author.date,
+  };
+}
+
+module.exports = { createLocatorFixPR, isConfigured, getPullRequest, getLatestCommitOnBranch };
