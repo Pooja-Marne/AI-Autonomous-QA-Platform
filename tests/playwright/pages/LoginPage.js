@@ -3,7 +3,7 @@ const { resolve } = require('../locators/resolve');
 class LoginPage {
   constructor(page) {
     this.page = page;
-    this.usernameInput = page.locator(resolve('LoginPage.usernameInput', '[data-test="uname"]'));
+    this.usernameInput = page.locator(resolve('LoginPage.usernameInput', '[data-test="uname-SINGLETEST"]'));
     this.passwordInput = page.locator(resolve('LoginPage.passwordInput', '[data-test="password"]'));
     this.loginButton = page.locator(resolve('LoginPage.loginButton', '[data-test="login"]'));
     this.errorText = page.locator(resolve('LoginPage.errorText', '[data-test="login-error"]'));
