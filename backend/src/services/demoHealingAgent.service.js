@@ -398,13 +398,21 @@ function extractFirstFailureDetails(results) {
   return detail;
 }
 
-function retryTest(testFile, testName) {
+function retryTest(testFile, testName, { timeoutMs } = {}) {
   return new Promise((resolve) => {
     const args = ['playwright', 'test'];
     if (testFile) args.push(testFile);
     if (testName) args.push('--grep', shellQuoteArg(testName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     args.push('--project=chromium', '--reporter=json');
-    const proc = spawn('npx', args, { cwd: TESTS_DIR, shell: true, timeout: 90000 });
+    if (timeoutMs) args.push(`--timeout=${timeoutMs}`);
+    // The node-level subprocess timeout is a hard kill for the WHOLE `npx
+    // playwright test` invocation (npx resolution + test-runner boot + the
+    // actual test), so it must stay comfortably above whatever per-test
+    // timeout we just asked Playwright to use — otherwise a legitimately
+    // still-running, correctly-bumped test gets killed by this outer guard
+    // before Playwright's own timeout ever gets a chance to apply.
+    const spawnTimeout = timeoutMs ? Math.max(90000, timeoutMs + 30000) : 90000;
+    const proc = spawn('npx', args, { cwd: TESTS_DIR, shell: true, timeout: spawnTimeout });
     let stdout = '';
     let stderr = '';
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -762,5 +770,5 @@ function getDemoHealingRuns({ limit = 50 } = {}) {
 
 module.exports = {
   runHealingCycle, extractSelectorFromMessage,
-  getDemoHealingRuns, getActiveCycle,
+  getDemoHealingRuns, getActiveCycle, retryTest,
 };

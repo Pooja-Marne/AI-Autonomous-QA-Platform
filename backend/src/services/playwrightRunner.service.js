@@ -353,11 +353,18 @@ async function runAndProcess(runId, suite, runName, trigger) {
     }
 
     if (remainingFailedCases.length > 0) {
-      // No locator to heal — these are diagnosed only (real OpenAI call,
-      // honest reasoning), never auto-marked as healed by chance.
-      console.log(`[Playwright Runner] ${remainingFailedCases.length} non-locator failures — running diagnosis only (no auto-fix possible)...`);
-      await healMultipleTestCases(remainingFailedCases);
-      notFixable += remainingFailedCases.length;
+      // No locator to heal — mostly diagnosed only (real OpenAI call, honest
+      // reasoning, never auto-marked as healed by chance), EXCEPT timeout
+      // failures, which get one real, live-verified remediation attempt
+      // first (see aiHealing.service.js's healTestCase / timeoutRemediation.
+      // service.js) — so results here are a genuine mix of healed/not_fixable,
+      // not uniformly not_fixable like before.
+      console.log(`[Playwright Runner] ${remainingFailedCases.length} non-locator failures — diagnosing (timeouts also get a live-verified remediation attempt)...`);
+      const results = await healMultipleTestCases(remainingFailedCases);
+      for (const result of results) {
+        if (result?.healingStatus === 'healed') { healed++; failed--; }
+        else notFixable++;
+      }
     }
 
     const completedAt = new Date().toISOString();

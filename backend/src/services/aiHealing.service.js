@@ -186,6 +186,49 @@ async function healTestCase(testCase) {
 
   try {
     const failureAnalysis = await classifyFailure(testCase);
+
+    // A timeout failure gets one real, live-verified remediation attempt
+    // before falling through to the text-only diagnosis below — see
+    // timeoutRemediation.service.js. Only a retry that ACTUALLY passes with
+    // the bumped timeout is ever recorded/reported as healed; anything else
+    // (parse failure, already at the ceiling, retry still fails) falls
+    // through to the normal not_fixable path unchanged.
+    if (failureAnalysis.failureType === 'timeout') {
+      const { attemptTimeoutRemediation } = require('./timeoutRemediation.service');
+      const remediation = await attemptTimeoutRemediation({
+        testKey: testCase.name, testFile: testCase.filePath, errorMessage: testCase.errorMessage, runId: testCase.runId,
+      });
+
+      if (remediation.healed) {
+        const healingId = uuidv4();
+        db.prepare(`
+          INSERT INTO healing_actions (id, test_case_id, run_id, failure_type, original_error, ai_analysis, suggested_fix, fix_applied, success, confidence_score, model_used, tokens_used)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          healingId, testCase.id, testCase.runId, failureAnalysis.failureType,
+          testCase.errorMessage || '', JSON.stringify(failureAnalysis), remediation.reasoning,
+          `Timeout bumped from ${remediation.originalMs}ms to ${remediation.bumpedMs}ms`, 1,
+          failureAnalysis.confidence, config.openai.model, failureAnalysis.tokensUsed || 0
+        );
+
+        db.prepare(`
+          UPDATE test_cases SET
+            failure_type = ?, healing_status = 'healed', healing_action = ?,
+            healing_suggestion = ?, status = 'healed', retry_count = retry_count + 1
+          WHERE id = ?
+        `).run(
+          failureAnalysis.failureType, remediation.reasoning,
+          JSON.stringify({ ...remediation, jiraIssueKey: testCase.jiraIssueKey || null }),
+          testCase.id
+        );
+
+        return {
+          id: healingId, testCaseId: testCase.id, failureType: failureAnalysis.failureType,
+          healingStatus: 'healed', healingAction: remediation.reasoning, confidence: failureAnalysis.confidence,
+        };
+      }
+    }
+
     const healingPlan = await generateHealingSuggestion(testCase, failureAnalysis);
 
     const healingId = uuidv4();

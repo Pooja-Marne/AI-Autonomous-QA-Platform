@@ -86,6 +86,23 @@ function initializeSchema(db) {
       FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
     );
 
+    -- Live-verified timeout auto-remediation — only a test whose retry with
+    -- a bumped timeout ACTUALLY passed gets a row here (never a fake/guessed
+    -- fix). One row per bump event; the latest 'active' row per test_key is
+    -- synced into resolved-timeouts.json, which the healingTest.js fixture
+    -- reads to override testInfo.setTimeout() before a test's hooks run.
+    CREATE TABLE IF NOT EXISTS timeout_remediations (
+      id TEXT PRIMARY KEY,
+      test_key TEXT NOT NULL,
+      test_file TEXT,
+      original_timeout_ms INTEGER NOT NULL,
+      bumped_timeout_ms INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active', -- active | superseded
+      reasoning TEXT,
+      run_id TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Real AI self-healing cycles (live DOM capture, AI analysis, live
     -- verification, real retry). Separate from healing_actions because this
     -- captures a richer, presentation-oriented record: real screenshot/
