@@ -13,7 +13,34 @@ const GIT_STATUS_LABEL = {
   failed: 'Failed',
 };
 
+// A locator can accumulate dozens of versions from repeated demo/chaos
+// cycles — many of them re-affirming the exact same value. Showing every
+// raw row buries the actual story (which distinct values were tried, and
+// how each one ended up) in noise. Collapses consecutive versions sharing
+// the same healed_locator into one summary row instead; full per-version
+// detail is still available, just not the default view.
+function groupHistory(history) {
+  const groups = [];
+  for (const h of history) {
+    const last = groups[groups.length - 1];
+    if (last && last.value === h.healed_locator) {
+      last.count += 1;
+      last.minVersion = h.version; // history is version DESC, so this only shrinks
+    } else {
+      groups.push({
+        value: h.healed_locator, status: h.status,
+        maxVersion: h.version, minVersion: h.version,
+        count: 1, latestDate: h.created_at,
+      });
+    }
+  }
+  return groups;
+}
+
+const HISTORY_GROUPS_COLLAPSED = 5;
+
 function LocatorCard({ locator, onApprove, onReject, busy }) {
+  const [showAllHistory, setShowAllHistory] = useState(false);
   return (
     <div className="glass-card border border-purple-500/10 overflow-hidden">
       <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2 border-b border-gray-800/60">
@@ -89,20 +116,42 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
           </a>
         )}
 
-        {locator.history?.length > 1 && (
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wider mb-1.5">Version History</p>
-            <div className="space-y-1">
-              {locator.history.map((h) => (
-                <div key={h.id} className="text-xs text-gray-500 flex items-center gap-2">
-                  <span className="font-mono">v{h.version}</span>
-                  <code className="text-gray-400">{h.healed_locator}</code>
-                  <span className={clsx(h.status === 'rejected' && 'text-red-400', h.status === 'approved' && 'text-green-400')}>{h.status}</span>
-                </div>
-              ))}
+        {locator.history?.length > 1 && (() => {
+          const groups = groupHistory(locator.history);
+          const visibleGroups = showAllHistory ? groups : groups.slice(0, HISTORY_GROUPS_COLLAPSED);
+          const hiddenCount = groups.length - visibleGroups.length;
+          return (
+            <div>
+              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1.5">
+                Version History
+                <span className="normal-case text-gray-600"> — {locator.history.length} versions, {groups.length} distinct value{groups.length === 1 ? '' : 's'} tried</span>
+              </p>
+              <div className="space-y-1">
+                {visibleGroups.map((g) => (
+                  <div key={`${g.value}-${g.maxVersion}`} className="text-xs text-gray-500 flex items-center gap-2">
+                    <span className="font-mono text-gray-600 flex-shrink-0">
+                      {g.count > 1 ? `v${g.minVersion}–v${g.maxVersion}` : `v${g.maxVersion}`}
+                    </span>
+                    <code className="text-gray-400 truncate">{g.value}</code>
+                    {g.count > 1 && <span className="text-gray-600 flex-shrink-0">×{g.count}</span>}
+                    <StatusBadge status={g.status} className="flex-shrink-0" />
+                    <span className="text-gray-600 flex-shrink-0 ml-auto">{new Date(g.latestDate).toLocaleDateString()}</span>
+                  </div>
+                ))}
+              </div>
+              {hiddenCount > 0 && (
+                <button onClick={() => setShowAllHistory(true)} className="text-xs text-blue-400 hover:underline mt-1.5">
+                  Show {hiddenCount} more
+                </button>
+              )}
+              {showAllHistory && groups.length > HISTORY_GROUPS_COLLAPSED && (
+                <button onClick={() => setShowAllHistory(false)} className="text-xs text-blue-400 hover:underline mt-1.5">
+                  Show less
+                </button>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {locator.status === 'pending_approval' && (
           <div className="flex gap-2">
