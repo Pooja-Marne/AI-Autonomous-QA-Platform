@@ -204,7 +204,7 @@ async function classifyFailureType({ errorMessage, stackTrace, testName, log }) 
 
 function buildLocatorPrompt({ elementDescription, oldLocator, domSnapshot, candidates, attempt, previousAttempts }) {
   const candidateBlock = (candidates || []).slice(0, 80).map((c, i) =>
-    `${i + 1}. <${c.tag}> data-test=${c.dataTest || '—'} data-testid=${c.dataTestId || '—'} id=${c.id || '—'} aria-label=${c.ariaLabel || '—'} role=${c.role || '—'} placeholder=${c.placeholder || '—'} text="${c.text}"`
+    `${i + 1}. <${c.tag} type=${c.type || '—'}> data-test=${c.dataTest || '—'} data-testid=${c.dataTestId || '—'} id=${c.id || '—'} aria-label=${c.ariaLabel || '—'} role=${c.role || '—'} placeholder=${c.placeholder || '—'} text="${c.text}"`
   ).join('\n');
 
   const historyBlock = previousAttempts.length
@@ -457,6 +457,35 @@ function persistDemoHealingRun(r) {
   ].map((v) => (v === undefined ? null : v))); // node:sqlite rejects `undefined` bind values outright
 }
 
+// Deterministic, code-guaranteed attribute-level description of what
+// changed — never dependent on whether the LLM's own prose happens to
+// mention it (it might not, or might describe it inconsistently). Parses
+// the common `[attr="value"]` CSS attribute-selector convention this
+// codebase's Page Objects use directly out of the actual old/new locator
+// strings we already have; falls back to showing the raw selectors side
+// by side for anything that isn't a simple attribute selector (id
+// selectors, text=, role=, etc.), rather than guessing.
+function describeLocatorChange(oldLocator, newLocator) {
+  if (!newLocator) return null;
+  const attrPattern = /\[([a-zA-Z0-9_-]+)\s*=\s*["']([^"']*)["']\]/;
+  const oldMatch = oldLocator?.match(attrPattern);
+  const newMatch = newLocator.match(attrPattern);
+  if (oldMatch && newMatch) {
+    const sameAttr = oldMatch[1] === newMatch[1];
+    return `Missing: ${oldMatch[1]}="${oldMatch[2]}" → Found: ${newMatch[1]}="${newMatch[2]}"${sameAttr ? '' : ' (different attribute)'}.`;
+  }
+  return `Missing: ${oldLocator || 'unknown selector'} → Found: ${newLocator}.`;
+}
+
+// Every rootCause shown on the dashboard is built through this, not by
+// concatenating analysis.rootCause directly — guarantees the attribute-level
+// change is always stated up front, with the LLM's own reasoning appended
+// after as supporting detail rather than being the only source of it.
+function buildRootCause(resolverTag, analysis, oldLocator) {
+  const attrDescription = describeLocatorChange(oldLocator, analysis.suggestedLocator);
+  return `${attrDescription ? attrDescription + ' ' : ''}${resolverTag} ${analysis.rootCause}`.trim();
+}
+
 function buildCodeSnippet(locatorKey, propertyName, locator) {
   if (!locator) return null;
   const [pageObject] = locatorKey.split('.');
@@ -608,9 +637,21 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
         const candidates = await gatherCandidateElements(page);
         log(`Found ${candidates.length} candidate elements on the live page.`);
 
+        // Identify which Page Object property owns this locator BEFORE
+        // asking the LLM for a fix, not after — the property name itself is
+        // a strong semantic hint (e.g. "passwordInput" should resolve to a
+        // password-type input, not a submit button) that the LLM otherwise
+        // never sees. Previously this lookup only happened once a candidate
+        // was already live-verified, too late to influence which candidate
+        // got picked in the first place.
+        const owner = findOwnerBySelectorValue(currentOldLocator) || findPageObjectPropertyFromStackTrace(currentStackTrace);
+        const elementDescription = owner
+          ? `the "${owner.propertyName}" property of the "${owner.className}" Page Object (originally targeted by: ${currentOldLocator}) — infer the expected element type/purpose from this property name (e.g. a property named like "passwordInput" should resolve to a password-type input field, not a button or unrelated element)`
+          : `an element the test "${testName || 'unknown'}" could not find (originally targeted by: ${currentOldLocator})`;
+
         const analysis = await analyzeLocatorFailure({
           page,
-          elementDescription: `an element the test "${testName || 'unknown'}" could not find (originally targeted by: ${currentOldLocator})`,
+          elementDescription,
           oldLocator: currentOldLocator, domSnapshot: domContent, candidates, screenshotBase64, log,
         });
 
@@ -628,7 +669,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
           log('Could not find a working replacement after all attempts. Flagging for manual review with the full attempt history attached.', 'done');
           record = {
             id: uuidv4(), runId, locatorKey: currentOldLocator, testFile, failedTests: failedTestNames,
-            oldLocator: currentOldLocator, newLocator: null, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            oldLocator: currentOldLocator, newLocator: null, rootCause: buildRootCause(resolverTag, analysis, currentOldLocator),
             confidenceScore: analysis.confidence, liveVerified: false, healingStatus: 'not_fixable', retryStatus: 'skipped',
             screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
             failureType: classification.failureType, attempts: analysis.attempts || 0,
@@ -637,19 +678,13 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
           break;
         }
 
-        // Try matching the broken value against a Page Object default first
-        // (works when source was edited to something wrong); fall back to
-        // reading the stack trace's actual file+line (works when the break
-        // came from a runtime DOM mutation instead, e.g. Chaos Mode) — the
-        // code's default is still correct in that case, so it never
-        // string-matches, but the stack trace still tells us exactly which
-        // property was being accessed.
-        const owner = findOwnerBySelectorValue(currentOldLocator) || findPageObjectPropertyFromStackTrace(currentStackTrace);
+        // owner was already resolved above (before the LLM call) so its
+        // property name could inform the prompt — reused here unchanged.
         if (!owner) {
           log(`Found a live-verified replacement, but "${currentOldLocator}" isn't a registered default in any Page Object — cannot persist the fix. Flagging for manual review.`, 'done');
           record = {
             id: uuidv4(), runId, locatorKey: currentOldLocator, testFile, failedTests: failedTestNames,
-            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: buildRootCause(resolverTag, analysis, currentOldLocator),
             confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'not_fixable', retryStatus: 'skipped',
             screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
             failureType: classification.failureType, attempts: analysis.attempts || 0,
@@ -680,7 +715,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
         if (retry.passed) {
           record = {
             id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: buildRootCause(resolverTag, analysis, currentOldLocator),
             confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'healed', retryStatus: 'passed',
             screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
             failureType: classification.failureType, attempts: analysis.attempts || 0,
@@ -701,7 +736,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
           log(`This fix resolved "${currentOldLocator}" — the retry advanced further and hit a separate broken locator ("${nextLocator}"). Keeping this fix and continuing to heal the next one...`);
           record = {
             id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+            oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: buildRootCause(resolverTag, analysis, currentOldLocator),
             confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'healed', retryStatus: 'passed_partial',
             screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
             failureType: classification.failureType, attempts: analysis.attempts || 0,
@@ -722,7 +757,7 @@ async function runHealingCycle({ module, testFile = null, testName = null, runId
         log('Retry failed against the same locator — rejected the repository entry; runtime resolution reverts to the Page Object default.', 'done');
         record = {
           id: uuidv4(), runId, locatorKey, testFile, failedTests: failedTestNames,
-          oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: `${resolverTag} ${analysis.rootCause}`.trim(),
+          oldLocator: currentOldLocator, newLocator: analysis.suggestedLocator, rootCause: buildRootCause(resolverTag, analysis, currentOldLocator),
           confidenceScore: analysis.confidence, liveVerified: true, healingStatus: 'not_fixable', retryStatus: 'failed',
           screenshotPath, tracePath, domSnapshotPath, timeTakenMs: timeTakenMs(), logs: logs.slice(logsStartIndex),
           failureType: classification.failureType, attempts: analysis.attempts || 0,
