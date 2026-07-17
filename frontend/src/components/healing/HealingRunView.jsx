@@ -79,10 +79,8 @@ function buildCompletedHealing(failure, healingSteps) {
 
 /**
  * Shared presentational run view: renders the full connect -> regression ->
- * failures -> healing -> executive report flow. Fed by either useDemoRunner
- * (scripted) or useLiveHealingRunner (real) — both produce the same
- * HealingRunState shape (see src/types/healingRun.ts), so this component has
- * no idea (and doesn't care) which one is driving it.
+ * failures -> healing -> executive report flow, fed by useLiveHealingRunner
+ * (see src/types/healingRun.ts for the HealingRunState shape it consumes).
  */
 export default function HealingRunView({
   state, failures, timeline, reportStats,

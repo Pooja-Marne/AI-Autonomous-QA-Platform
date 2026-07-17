@@ -1,7 +1,5 @@
-// Shared contract for the AI Healing run UI. Both the scripted demo engine
-// (useDemoRunner) and the real-data engine (useLiveHealingRunner) produce
-// this exact shape so a single presentational component (HealingRunView)
-// can render either without knowing which one is feeding it.
+// Shared contract for the AI Healing run UI — the shape useLiveHealingRunner
+// produces and HealingRunView renders.
 
 export type RunPhase = 'idle' | 'connecting' | 'running' | 'failures' | 'healing' | 'report';
 

@@ -74,10 +74,9 @@ function deriveHealing(activeCycle, failures) {
   };
 }
 
-// Real-data counterpart to useDemoRunner: same HealingRunState shape (see
+// Drives the AI Healing page's live view: HealingRunState shape (see
 // src/types/healingRun.ts), driven by polling GET /runs/:id/live (in-memory,
-// fast) and GET /runs/:id (DB-backed, authoritative once the run finishes)
-// instead of a scripted timeline.
+// fast) and GET /runs/:id (DB-backed, authoritative once the run finishes).
 export function useLiveHealingRunner() {
   const [state, setState] = useState(initialState);
   const [reportStats, setReportStats] = useState(null);
