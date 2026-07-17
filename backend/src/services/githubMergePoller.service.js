@@ -2,9 +2,13 @@ const cron = require('node-cron');
 const { getDatabase } = require('../config/database');
 const { isConfigured, getPullRequest } = require('./gitIntegration.service');
 
-// PR merges are lower urgency than Jira's "tests may be currently blocked"
-// 2-minute poll — 5 minutes is plenty responsive for dashboard visibility.
-const POLL_INTERVAL = '*/5 * * * *';
+// Demo-friendly interval — the dashboard should visibly flip from "PR Open"
+// to "Resolved" within a few seconds of merging, not on the next 5-minute
+// tick. GitHub's REST API rate limit (5000 req/hr for an authenticated
+// token) has plenty of headroom for polling this often against a handful
+// of open PRs. Configurable via GITHUB_MERGE_POLL_INTERVAL if a slower/
+// cheaper cadence is ever wanted again outside of demos.
+const POLL_INTERVAL = process.env.GITHUB_MERGE_POLL_INTERVAL || '*/15 * * * * *';
 
 let pollerJob = null;
 let consecutiveFailures = 0;
@@ -64,7 +68,7 @@ function initializeGithubMergePoller() {
   }
   if (pollerJob) pollerJob.stop();
   pollerJob = cron.schedule(POLL_INTERVAL, pollForMergedPRs);
-  console.log('[GithubMergePoller] Polling for merged PRs every 5 minutes');
+  console.log(`[GithubMergePoller] Polling for merged PRs on schedule: ${POLL_INTERVAL}`);
   pollForMergedPRs();
 }
 
