@@ -205,7 +205,9 @@ function initializeSchema(db) {
       run_id TEXT,
       dismissed INTEGER DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      decided_at DATETIME
+      decided_at DATETIME,
+      recommended_suite TEXT,
+      recommendation_reason TEXT
     );
 
     -- Reports
@@ -235,6 +237,16 @@ function initializeSchema(db) {
   }
   if (!testRunCols.includes('execution_logs')) {
     db.exec('ALTER TABLE test_runs ADD COLUMN execution_logs TEXT');
+  }
+
+  // Additive migration: pending_triggers predates AI-driven suite
+  // recommendation (see jiraPoller.service.js's recommendSuite()).
+  const triggerCols = db.prepare('PRAGMA table_info(pending_triggers)').all().map((c) => c.name);
+  if (!triggerCols.includes('recommended_suite')) {
+    db.exec('ALTER TABLE pending_triggers ADD COLUMN recommended_suite TEXT');
+  }
+  if (!triggerCols.includes('recommendation_reason')) {
+    db.exec('ALTER TABLE pending_triggers ADD COLUMN recommendation_reason TEXT');
   }
 
   // Additive migration: demo_healing_runs predates LLM-driven failure-type

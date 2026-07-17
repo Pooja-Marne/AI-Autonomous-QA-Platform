@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const OpenAI = require('openai');
 const config = require('../config/config');
 const { getDatabase } = require('../config/database');
 
@@ -17,6 +18,52 @@ const jiraClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
   timeout: 15000,
 });
+
+const openai = new OpenAI({ apiKey: config.openai.apiKey, baseURL: config.openai.baseURL });
+const RECOMMENDABLE_SUITES = ['full_regression', 'smoke', 'regression'];
+
+// One real LLM call per trigger, made once at creation time (not per
+// dashboard render) — same "send context, get back JSON verdict +
+// reasoning" shape as aiHealing.service.js's classifyFailure(). Degrades
+// honestly on any failure (no key configured, API error, bad JSON): falls
+// back to the previous static default rather than blocking trigger
+// creation or showing nothing.
+async function recommendSuite({ key, summary, type, priority }) {
+  const fallback = { suite: 'full_regression', reason: null };
+  if (!config.openai.apiKey) return fallback;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: config.openai.model,
+      messages: [
+        { role: 'system', content: 'You are a QA lead deciding how much regression testing a just-closed Jira issue warrants. Respond only with the requested JSON.' },
+        {
+          role: 'user',
+          content: `Jira issue ${key} was just closed.
+Type: ${type || 'Unknown'}
+Priority: ${priority || 'Unknown'}
+Summary: ${summary || 'N/A'}
+
+Choose exactly ONE test suite to recommend running to validate this change:
+- full_regression: every Playwright spec — use for anything broad, high-risk, or touching core flows (auth, checkout, etc.), or when unsure
+- smoke: tests tagged @smoke — fastest pass/fail signal, use for small/low-risk/cosmetic changes
+- regression: tests tagged @regression — a focused but not exhaustive set, use for medium-risk changes scoped to one area
+
+Respond in JSON: {"suite": "<one of full_regression|smoke|regression>", "reason": "<one short sentence why, referencing the issue>"}`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 200,
+      response_format: { type: 'json_object' },
+    });
+    const result = JSON.parse(response.choices[0].message.content);
+    if (!RECOMMENDABLE_SUITES.includes(result.suite)) return fallback;
+    return { suite: result.suite, reason: result.reason || null };
+  } catch (err) {
+    console.warn('[JiraPoller] recommendSuite failed, falling back to full_regression:', err.message);
+    return fallback;
+  }
+}
 
 async function pollForResolvedIssues() {
   const db = getDatabase();
@@ -98,17 +145,22 @@ async function pollForResolvedIssues() {
         event_type: fields.issuetype?.name === 'Bug' ? 'bug_fixed' : 'story_closed',
       };
 
+      const recommendation = await recommendSuite({
+        key: trigger.jira_key, summary: trigger.jira_summary, type: trigger.jira_type, priority: trigger.jira_priority,
+      });
+
       db.prepare(`
-        INSERT INTO pending_triggers (id, jira_key, jira_summary, jira_type, jira_status, jira_priority, jira_assignee, jira_url, previous_status, event_type)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO pending_triggers (id, jira_key, jira_summary, jira_type, jira_status, jira_priority, jira_assignee, jira_url, previous_status, event_type, recommended_suite, recommendation_reason)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         trigger.id, trigger.jira_key, trigger.jira_summary, trigger.jira_type,
         trigger.jira_status, trigger.jira_priority, trigger.jira_assignee,
-        trigger.jira_url, trigger.previous_status, trigger.event_type
+        trigger.jira_url, trigger.previous_status, trigger.event_type,
+        recommendation.suite, recommendation.reason
       );
 
-      newTriggers.push(trigger);
-      console.log(`[JiraPoller] New trigger created for ${key}: ${trigger.jira_summary}`);
+      newTriggers.push({ ...trigger, recommended_suite: recommendation.suite, recommendation_reason: recommendation.reason });
+      console.log(`[JiraPoller] New trigger created for ${key}: ${trigger.jira_summary} (recommended: ${recommendation.suite})`);
     }
 
     return newTriggers;
@@ -150,9 +202,12 @@ async function createManualTrigger(issueKey) {
     if (existing) return { alreadyPending: true, triggerId: existing.id };
 
     const id = uuidv4();
+    const recommendation = await recommendSuite({
+      key: issueKey, summary: fields.summary, type: fields.issuetype?.name, priority: fields.priority?.name,
+    });
     db.prepare(`
-      INSERT INTO pending_triggers (id, jira_key, jira_summary, jira_type, jira_status, jira_priority, jira_assignee, jira_url, previous_status, event_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO pending_triggers (id, jira_key, jira_summary, jira_type, jira_status, jira_priority, jira_assignee, jira_url, previous_status, event_type, recommended_suite, recommendation_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, issueKey,
       fields.summary || 'No summary',
@@ -162,7 +217,8 @@ async function createManualTrigger(issueKey) {
       fields.assignee?.displayName || 'Unassigned',
       `${config.jira.baseUrl}/browse/${issueKey}`,
       'In Progress',
-      fields.issuetype?.name === 'Bug' ? 'bug_fixed' : 'story_closed'
+      fields.issuetype?.name === 'Bug' ? 'bug_fixed' : 'story_closed',
+      recommendation.suite, recommendation.reason
     );
 
     return { created: true, triggerId: id };

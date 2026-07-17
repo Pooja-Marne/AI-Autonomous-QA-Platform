@@ -9,7 +9,6 @@ const SUITES = [
     label: 'Full Regression',
     desc: 'Every Playwright spec — auth, cart, checkout, inventory, e2e',
     icon: '🔁',
-    recommended: true,
   },
   {
     value: 'smoke',
@@ -32,7 +31,8 @@ const TYPE_CONFIG = {
 };
 
 function SingleTriggerCard({ trigger, onDecision }) {
-  const [selectedSuite, setSelectedSuite] = useState('full_regression');
+  const recommendedSuite = trigger.recommended_suite || 'full_regression';
+  const [selectedSuite, setSelectedSuite] = useState(recommendedSuite);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('choose'); // 'choose' | 'confirm'
 
@@ -105,7 +105,7 @@ function SingleTriggerCard({ trigger, onDecision }) {
         {/* Suite Selection */}
         <div className="space-y-2 mb-4">
           {SUITES.map((suite) => {
-            const showRecommended = suite.recommended;
+            const showRecommended = suite.value === recommendedSuite;
             return (
             <label
               key={suite.value}
@@ -135,6 +135,9 @@ function SingleTriggerCard({ trigger, onDecision }) {
                   )}
                 </div>
                 <p className="text-xs text-gray-400 mt-0.5 truncate">{suite.desc}</p>
+                {showRecommended && trigger.recommendation_reason && (
+                  <p className="text-xs text-blue-300/80 mt-1 italic">"{trigger.recommendation_reason}"</p>
+                )}
               </div>
               {selectedSuite === suite.value && (
                 <ChevronRight className="w-4 h-4 text-blue-400 flex-shrink-0" />
