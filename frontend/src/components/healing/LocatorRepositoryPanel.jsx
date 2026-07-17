@@ -39,12 +39,22 @@ function groupHistory(history) {
 
 const HISTORY_GROUPS_COLLAPSED = 5;
 
-function LocatorCard({ locator, onApprove, onReject, busy }) {
+function LocatorCard({ locator, onReject, busy, selected, onToggleSelect }) {
   const [showAllHistory, setShowAllHistory] = useState(false);
+  const isPending = locator.status === 'pending_approval';
   return (
-    <div className="glass-card border border-purple-500/10 overflow-hidden">
+    <div className={clsx('glass-card border overflow-hidden', isPending && selected ? 'border-blue-500/40' : 'border-purple-500/10')}>
       <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2 border-b border-gray-800/60">
-        <div className="min-w-0">
+        <div className="min-w-0 flex items-center gap-2">
+          {isPending && (
+            <input
+              type="checkbox"
+              checked={selected}
+              onChange={() => onToggleSelect(locator.id)}
+              className="accent-blue-500 flex-shrink-0"
+              title="Include in batch approval"
+            />
+          )}
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-mono text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">
               {locator.page_object}.{locator.property_name}
@@ -155,9 +165,6 @@ function LocatorCard({ locator, onApprove, onReject, busy }) {
 
         {locator.status === 'pending_approval' && (
           <div className="flex gap-2">
-            <button onClick={() => onApprove(locator.id)} disabled={busy} className="btn-primary flex-1 justify-center py-1.5 text-xs disabled:opacity-50">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Approve &amp; Open PR
-            </button>
             <button onClick={() => onReject(locator.id)} disabled={busy} className="btn-secondary flex-1 justify-center py-1.5 text-xs disabled:opacity-50">
               <XCircle className="w-3.5 h-3.5" /> Reject
             </button>
@@ -175,15 +182,22 @@ export default function LocatorRepositoryPanel() {
   const [gitConfigured, setGitConfigured] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [approvingBatch, setApprovingBatch] = useState(false);
   const [message, setMessage] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   const load = async () => {
     setLoading(true);
     try {
       const res = await locatorsApi.getAll();
-      setLocators(res.data || []);
+      const active = res.data || [];
+      setLocators(active);
       setResolvedLocators(res.resolved || []);
       setGitConfigured(res.gitIntegrationConfigured !== false);
+      // Default every pending locator to selected — approving is opt-out,
+      // not opt-in, since the common case is "approve everything this run
+      // healed together" rather than hand-picking one at a time.
+      setSelectedIds(new Set(active.filter((l) => l.status === 'pending_approval').map((l) => l.id)));
     } finally {
       setLoading(false);
     }
@@ -191,18 +205,34 @@ export default function LocatorRepositoryPanel() {
 
   useEffect(() => { load(); }, []);
 
-  const handleApprove = async (id) => {
-    setBusyId(id);
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const handleApproveSelected = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    setApprovingBatch(true);
     setMessage(null);
     try {
-      const res = await locatorsApi.approve(id);
-      if (res.data?.gitError) setMessage({ type: 'warn', text: `Approved, but Git integration didn't complete: ${res.data.gitError}` });
-      else setMessage({ type: 'success', text: 'Approved and pull request opened.' });
+      const res = await locatorsApi.approveBatch(ids);
+      const { included = [], skipped = [], prUrl } = res.data || {};
+      if (prUrl && skipped.length === 0) {
+        setMessage({ type: 'success', text: `${included.length} locator(s) approved — one PR opened: ${prUrl}` });
+      } else if (prUrl && skipped.length > 0) {
+        setMessage({ type: 'warn', text: `${included.length} included in the PR (${prUrl}), ${skipped.length} skipped: ${skipped.map((s) => `${s.pageObject}.${s.propertyName} (${s.reason})`).join('; ')}` });
+      } else {
+        setMessage({ type: 'error', text: res.data?.reason || 'Approved, but no PR could be opened.' });
+      }
       await load();
     } catch (err) {
       setMessage({ type: 'error', text: err.message });
     } finally {
-      setBusyId(null);
+      setApprovingBatch(false);
     }
   };
 
@@ -219,6 +249,8 @@ export default function LocatorRepositoryPanel() {
   if (loading) return null;
   if (locators.length === 0 && resolvedLocators.length === 0) return null;
 
+  const pendingCount = locators.filter((l) => l.status === 'pending_approval').length;
+
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -229,16 +261,31 @@ export default function LocatorRepositoryPanel() {
         <p className="text-xs text-gray-500">Git integration isn't configured (GITHUB_TOKEN/GITHUB_REPO) — approving marks a fix reviewed but won't open a PR automatically.</p>
       )}
       {message && (
-        <p className={clsx('text-xs', message.type === 'success' ? 'text-green-400' : message.type === 'warn' ? 'text-yellow-400' : 'text-red-400')}>{message.text}</p>
+        <p className={clsx('text-xs break-all', message.type === 'success' ? 'text-green-400' : message.type === 'warn' ? 'text-yellow-400' : 'text-red-400')}>{message.text}</p>
       )}
 
       <div className="space-y-2">
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Healing ({locators.length})</p>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Healing ({locators.length})</p>
+          {pendingCount > 0 && (
+            <button
+              onClick={handleApproveSelected}
+              disabled={approvingBatch || selectedIds.size === 0}
+              className="btn-primary py-1.5 text-xs disabled:opacity-50"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              {approvingBatch ? 'Opening PR...' : `Approve Selected (${selectedIds.size}) & Open PR`}
+            </button>
+          )}
+        </div>
         {locators.length === 0 ? (
           <p className="text-xs text-gray-600">No unresolved locator fixes — everything active is confirmed in source or awaiting no further action.</p>
         ) : (
           locators.map((loc) => (
-            <LocatorCard key={loc.id} locator={loc} onApprove={handleApprove} onReject={handleReject} busy={busyId === loc.id} />
+            <LocatorCard
+              key={loc.id} locator={loc} onReject={handleReject} busy={busyId === loc.id}
+              selected={selectedIds.has(loc.id)} onToggleSelect={toggleSelect}
+            />
           ))
         )}
       </div>
@@ -255,7 +302,7 @@ export default function LocatorRepositoryPanel() {
           {showResolved && (
             <div className="space-y-2">
               {resolvedLocators.map((loc) => (
-                <LocatorCard key={loc.id} locator={loc} onApprove={handleApprove} onReject={handleReject} busy={busyId === loc.id} />
+                <LocatorCard key={loc.id} locator={loc} onReject={handleReject} busy={busyId === loc.id} />
               ))}
             </div>
           )}

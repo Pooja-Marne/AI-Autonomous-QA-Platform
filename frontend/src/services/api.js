@@ -69,6 +69,7 @@ export const triggersApi = {
 export const locatorsApi = {
   getAll: () => api.get('/locators'),
   approve: (id, body) => api.post(`/locators/${id}/approve`, body),
+  approveBatch: (ids, body) => api.post('/locators/approve-batch', { ids, ...body }),
   reject: (id) => api.post(`/locators/${id}/reject`),
 };
 

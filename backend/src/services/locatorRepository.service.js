@@ -303,6 +303,45 @@ async function approveLocator(id, { approvedBy = 'dashboard-user' } = {}) {
   return { ...getLocatorById(id), gitError: gitResult.reason };
 }
 
+// Approves and opens ONE PR for a whole batch of locators at once — used
+// when a regression run heals more than one locator, so they don't each
+// get their own separate (and potentially conflicting, see PR #5/#6
+// history) PR. Marks every row approved first (same as single-approve),
+// then hands the whole batch to createBatchLocatorFixPR; whatever actually
+// made it into the resulting commit gets git_status='pr_open' sharing the
+// same PR/commit, and anything that couldn't be applied gets 'failed'
+// individually rather than failing the entire batch.
+async function approveLocatorsBatch(ids, { approvedBy = 'dashboard-user' } = {}) {
+  const db = getDatabase();
+  const rows = ids.map(getLocatorById).filter(Boolean);
+  for (const r of rows) {
+    db.prepare(`
+      UPDATE locator_repository SET status = 'approved', approved_at = CURRENT_TIMESTAMP, approved_by = ?
+      WHERE id = ?
+    `).run(approvedBy, r.id);
+  }
+  syncRuntimeCache();
+
+  const { createBatchLocatorFixPR } = require('./gitIntegration.service');
+  const result = await createBatchLocatorFixPR(rows.map((r) => ({
+    id: r.id, pageObject: r.page_object, propertyName: r.property_name,
+    originalLocator: r.original_locator, healedLocator: r.healed_locator,
+    confidenceScore: r.confidence_score, healingReason: r.healing_reason,
+  })));
+
+  for (const inc of result.included) {
+    updateGitStatus(inc.id, { gitStatus: 'pr_open', commitSha: result.commitSha, prUrl: result.prUrl, prNumber: result.prNumber });
+  }
+  for (const sk of result.skipped) {
+    db.prepare(`UPDATE locator_repository SET git_status = 'failed' WHERE id = ?`).run(sk.id);
+  }
+
+  return {
+    ...result,
+    locators: rows.map((r) => getLocatorById(r.id)), // fresh state for every row touched, for the dashboard to re-render from
+  };
+}
+
 function updateGitStatus(id, { gitStatus, commitSha, prUrl, prNumber }) {
   const db = getDatabase();
   db.prepare(`
@@ -314,7 +353,7 @@ function updateGitStatus(id, { gitStatus, commitSha, prUrl, prNumber }) {
 }
 
 module.exports = {
-  recordHealedLocator, rejectLocator, approveLocator, updateGitStatus,
+  recordHealedLocator, rejectLocator, approveLocator, approveLocatorsBatch, updateGitStatus,
   getLocatorById, listActiveLocators, listResolvedLocators, syncRuntimeCache, RESOLVED_CACHE_PATH,
   deleteLocator, clearAllLocators, checkAndInvalidateOnVersionChange, getCurrentAppVersion,
   findActiveLocatorRepositoryRow, resolveIfSourceMatches, reconcileLocatorRepositoryAgainstSource,

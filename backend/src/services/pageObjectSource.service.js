@@ -9,8 +9,12 @@ const PAGES_DIR = path.join(config.automation.repoPath, 'playwright', 'pages');
 // Used both to look up a property by its current value and to check what
 // value a specific property currently holds in source.
 function buildResolveCallRegex({ pageObject, propertyName, value } = {}) {
-  const cls = pageObject || '\\w+';
-  const prop = propertyName || '\\w+';
+  // Escaped the same way `value` already was below — pageObject/propertyName
+  // only ever come from \w+-matched source in practice, so this is
+  // defensive rather than fixing an observed bug, but batch operations
+  // (approveLocatorsBatch) raise the blast radius of any future edge case.
+  const cls = pageObject ? pageObject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '\\w+';
+  const prop = propertyName ? propertyName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '\\w+';
   const val = value !== undefined
     ? value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     : '.*?';

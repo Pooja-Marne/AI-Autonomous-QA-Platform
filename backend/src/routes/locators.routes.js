@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const {
-  listActiveLocators, listResolvedLocators, approveLocator, rejectLocator, getLocatorById,
+  listActiveLocators, listResolvedLocators, approveLocator, approveLocatorsBatch, rejectLocator, getLocatorById,
   deleteLocator, clearAllLocators,
 } = require('../services/locatorRepository.service');
 const { isConfigured: gitConfigured } = require('../services/gitIntegration.service');
@@ -31,6 +31,18 @@ router.delete('/clear', async (req, res) => {
 router.post('/reset', async (req, res) => {
   try {
     res.json({ success: true, data: clearAllLocators() });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Also registered before /:id, same reason — approves a whole batch of
+// locators (potentially spanning multiple Page Object files) and opens ONE
+// PR for all of them, instead of one PR per locator.
+router.post('/approve-batch', async (req, res) => {
+  try {
+    const result = await approveLocatorsBatch(req.body?.ids || [], { approvedBy: req.body?.approvedBy });
+    res.json({ success: true, data: result });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
