@@ -18,6 +18,14 @@ function computeStage(locator) {
 
 export default function LocatorLifecycleStepper({ locator }) {
   const stage = computeStage(locator);
+  // Approved, but the PR attempt itself failed (or its PR was closed
+  // unmerged) — otherwise indistinguishable from "PR never attempted",
+  // since both leave computeStage's result looking identical (stage 1,
+  // "PR Created" still a plain future step) despite being very different
+  // situations for the user to act on.
+  const failedStepIndex = locator.status === 'approved' && ['failed', 'pr_closed_unmerged'].includes(locator.git_status)
+    ? stage + 1
+    : -1;
 
   return (
     <div className="flex items-center gap-1 overflow-x-auto py-1">
@@ -27,22 +35,26 @@ export default function LocatorLifecycleStepper({ locator }) {
             <span
               className={clsx(
                 'w-2.5 h-2.5 rounded-full flex-shrink-0',
-                i < stage && 'bg-emerald-400',
-                i === stage && 'bg-purple-400 ring-2 ring-purple-400/30',
-                i > stage && 'bg-gray-700'
+                i === failedStepIndex && 'bg-red-500 ring-2 ring-red-500/30',
+                i !== failedStepIndex && i < stage && 'bg-emerald-400',
+                i !== failedStepIndex && i === stage && 'bg-purple-400 ring-2 ring-purple-400/30',
+                i !== failedStepIndex && i > stage && 'bg-gray-700'
               )}
             />
             <span
               className={clsx(
                 'text-[10px] text-center leading-tight whitespace-nowrap',
-                i <= stage ? 'text-gray-300' : 'text-gray-600'
+                i === failedStepIndex ? 'text-red-400' : i <= stage ? 'text-gray-300' : 'text-gray-600'
               )}
             >
-              {label}
+              {i === failedStepIndex ? 'PR Failed' : label}
             </span>
           </div>
           {i < STAGES.length - 1 && (
-            <span className={clsx('h-px w-6 -mt-4 flex-shrink-0', i < stage ? 'bg-emerald-400/60' : 'bg-gray-700')} />
+            <span className={clsx(
+              'h-px w-6 -mt-4 flex-shrink-0',
+              i + 1 === failedStepIndex ? 'bg-red-500/60' : i < stage ? 'bg-emerald-400/60' : 'bg-gray-700'
+            )} />
           )}
         </div>
       ))}
