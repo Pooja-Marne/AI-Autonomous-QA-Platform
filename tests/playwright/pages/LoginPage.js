@@ -5,7 +5,7 @@ class LoginPage {
     this.page = page;
     this.usernameInput = page.locator(resolve('LoginPage.usernameInput', '[data-test="username2"]'));
     this.passwordInput = page.locator(resolve('LoginPage.passwordInput', '[data-test="password"]'));
-    this.loginButton = page.locator(resolve('LoginPage.loginButton', '[data-test="login"]'));
+    this.loginButton = page.locator(resolve('LoginPage.loginButton', '[data-test="newlogin"]'));
     this.errorText = page.locator(resolve('LoginPage.errorText', '[data-test="login-error"]'));
   }
 
