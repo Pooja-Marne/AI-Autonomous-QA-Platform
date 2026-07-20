@@ -77,4 +77,10 @@ export const systemApi = {
   getSourceInfo: () => api.get('/system/source-info'),
 };
 
+export const coverageApi = {
+  analyze: (key, triggerId) => api.post(`/coverage/${key}/analyze`, { triggerId }),
+  get: (key) => api.get(`/coverage/${key}`),
+  dismiss: (id) => api.post(`/coverage/recommendations/${id}/dismiss`),
+};
+
 export default api;

@@ -20,6 +20,7 @@ const triggersRoutes = require('./routes/triggers.routes');
 const demoHealingRoutes = require('./routes/demoHealing.routes');
 const locatorsRoutes = require('./routes/locators.routes');
 const systemRoutes = require('./routes/system.routes');
+const testCoverageRoutes = require('./routes/testCoverage.routes');
 
 const app = express();
 
@@ -69,6 +70,7 @@ app.use('/api/triggers', triggersRoutes);
 app.use('/api/demo-healing', demoHealingRoutes);
 app.use('/api/locators', locatorsRoutes);
 app.use('/api/system', systemRoutes);
+app.use('/api/coverage', testCoverageRoutes);
 app.use('/demo-artifacts', express.static(path.join(__dirname, '..', 'data', 'demo-artifacts')));
 
 // Production deployment serves the built React app from this same process
@@ -111,7 +113,7 @@ async function bootstrap() {
     app.listen(PORT, () => {
       logger.info(`[Server] AI QA Platform running on http://localhost:${PORT}`);
       logger.info(`[Server] Environment: ${config.server.nodeEnv}`);
-      logger.info('[Endpoints] /api/runs | /api/jira | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/demo-healing | /api/locators | /api/system');
+      logger.info('[Endpoints] /api/runs | /api/jira | /api/healing | /api/reports | /api/scheduler | /api/triggers | /api/demo-healing | /api/locators | /api/system | /api/coverage');
     });
   } catch (err) {
     logger.error('Bootstrap failed:', err);

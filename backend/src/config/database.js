@@ -210,6 +210,28 @@ function initializeSchema(db) {
       recommendation_reason TEXT
     );
 
+    -- Coverage Intelligence: LLM-derived test-case recommendations per Jira
+    -- issue, cross-checked against the live Playwright spec inventory
+    -- (specInventory.service.js) at analysis time. One row per proposed
+    -- scenario (both gaps AND matched-existing, for transparency); re-running
+    -- analysis for the same jira_key produces a new analysis_id batch rather
+    -- than overwriting history.
+    CREATE TABLE IF NOT EXISTS test_case_recommendations (
+      id TEXT PRIMARY KEY,
+      analysis_id TEXT NOT NULL,
+      jira_key TEXT NOT NULL,
+      jira_summary TEXT,
+      trigger_id TEXT,
+      title TEXT NOT NULL,
+      module TEXT,
+      rationale TEXT,
+      coverage_status TEXT NOT NULL DEFAULT 'gap', -- 'gap' | 'covered'
+      matched_existing_test TEXT,
+      overall_status TEXT,
+      dismissed INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Reports
     CREATE TABLE IF NOT EXISTS reports (
       id TEXT PRIMARY KEY,

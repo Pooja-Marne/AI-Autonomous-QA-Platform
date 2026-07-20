@@ -6,6 +6,7 @@ import StatusBadge from '../components/StatusBadge';
 import LoadingSpinner from '../components/LoadingSpinner';
 import CreateJiraBugModal from '../components/CreateJiraBugModal';
 import JiraTriggerPrompt from '../components/JiraTriggerPrompt';
+import TestCoverageModal from '../components/TestCoverageModal';
 import { timeAgo } from '../utils/dateUtils';
 
 const TYPE_ICONS = { Bug: Bug, Story: BookOpen, Task: CheckSquare };
@@ -58,6 +59,7 @@ export default function JiraPage() {
   const [manualKey, setManualKey] = useState('');
   const [submittingManual, setSubmittingManual] = useState(false);
   const [bugModal, setBugModal] = useState(null); // { prefill: {} }
+  const [coverageModal, setCoverageModal] = useState(null); // { key, summary }
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -513,6 +515,16 @@ export default function JiraPage() {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center justify-end gap-2">
+                          {isDone && (
+                            <button
+                              onClick={() => setCoverageModal({ key: issue.key, summary: issue.summary })}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white text-xs rounded-lg transition-colors"
+                              title="Analyze test coverage for this issue"
+                            >
+                              <Radar className="w-3 h-3" />
+                              Coverage
+                            </button>
+                          )}
                           <button
                             onClick={() => openBugModalForIssue(issue)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-red-600/80 hover:bg-red-600 text-white text-xs rounded-lg transition-colors"
@@ -547,6 +559,15 @@ export default function JiraPage() {
             setBugModal(null);
             load(true); // refresh to show new bug
           }}
+        />
+      )}
+
+      {/* Test Coverage Modal */}
+      {coverageModal && (
+        <TestCoverageModal
+          jiraKey={coverageModal.key}
+          jiraSummary={coverageModal.summary}
+          onClose={() => setCoverageModal(null)}
         />
       )}
     </div>

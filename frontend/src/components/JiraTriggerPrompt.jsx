@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Bug, BookOpen, CheckSquare, Play, X, ChevronRight, Zap, AlertTriangle } from 'lucide-react';
+import { Bug, BookOpen, CheckSquare, Play, X, ChevronRight, Zap, AlertTriangle, Radar } from 'lucide-react';
 import clsx from 'clsx';
 import { triggersApi } from '../services/api';
+import TestCoverageModal from './TestCoverageModal';
 
 const SUITES = [
   {
@@ -35,6 +36,7 @@ function SingleTriggerCard({ trigger, onDecision }) {
   const [selectedSuite, setSelectedSuite] = useState(recommendedSuite);
   const [loading, setLoading] = useState(false);
   const [step, setStep] = useState('choose'); // 'choose' | 'confirm'
+  const [showCoverage, setShowCoverage] = useState(false);
 
   const typeConfig = TYPE_CONFIG[trigger.jira_type] || TYPE_CONFIG.Task;
   const TypeIcon = typeConfig.icon;
@@ -164,7 +166,23 @@ function SingleTriggerCard({ trigger, onDecision }) {
             {loading ? 'Starting...' : `Run ${SUITES.find(s => s.value === selectedSuite)?.label}`}
           </button>
         </div>
+        <button
+          onClick={() => setShowCoverage(true)}
+          className="w-full mt-2 flex items-center justify-center gap-1.5 py-2 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+        >
+          <Radar className="w-3.5 h-3.5" />
+          Analyze Test Coverage
+        </button>
       </div>
+
+      {showCoverage && (
+        <TestCoverageModal
+          jiraKey={trigger.jira_key}
+          jiraSummary={trigger.jira_summary}
+          triggerId={trigger.id}
+          onClose={() => setShowCoverage(false)}
+        />
+      )}
     </div>
   );
 }
@@ -183,7 +201,12 @@ export default function JiraTriggerPrompt({ triggers, onDecision, inline = false
     );
   }
 
-  // Floating overlay mode: fixed bottom-right (used globally from App.jsx)
+  // Floating overlay mode: fixed bottom-right (used globally from App.jsx).
+  // Every pending trigger renders as its own card — a poll tick that finds
+  // several issues closed together should surface all of them at once, not
+  // just the first with the rest hidden behind the count badge. Capped at
+  // 80vh + scrollable so a burst of several doesn't grow the panel taller
+  // than the viewport.
   return (
     <div className="fixed bottom-5 right-5 z-50 flex flex-col gap-3 max-w-md w-full">
       {triggers.length > 1 && (
@@ -192,11 +215,11 @@ export default function JiraTriggerPrompt({ triggers, onDecision, inline = false
           <span>{triggers.length} Jira events pending your decision</span>
         </div>
       )}
-      <SingleTriggerCard
-        key={triggers[0].id}
-        trigger={triggers[0]}
-        onDecision={onDecision}
-      />
+      <div className="space-y-3 max-h-[80vh] overflow-y-auto pr-1">
+        {triggers.map((t) => (
+          <SingleTriggerCard key={t.id} trigger={t} onDecision={onDecision} />
+        ))}
+      </div>
     </div>
   );
 }
