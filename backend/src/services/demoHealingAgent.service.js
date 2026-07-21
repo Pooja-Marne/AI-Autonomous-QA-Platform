@@ -292,6 +292,11 @@ async function analyzeWithClaude(args) {
 // MAX_HEALING_ATTEMPTS, before the locator is given up on.
 async function analyzeLocatorFailure({ page, elementDescription, oldLocator, domSnapshot, candidates, screenshotBase64, log }) {
   const previousAttempts = [];
+  // Set only when an attempt is rejected for re-proposing the failing
+  // locator unchanged (see below) — lets the final fallback explain THAT
+  // reason specifically, instead of the generic "no live match" message,
+  // when every attempt was rejected for this reason.
+  let lastIdenticalRootCause = null;
 
   for (let attempt = 1; attempt <= MAX_HEALING_ATTEMPTS; attempt++) {
     log(`Asking the LLM for a candidate locator (attempt ${attempt}/${MAX_HEALING_ATTEMPTS})...`, 'analyzing');
@@ -320,6 +325,25 @@ async function analyzeLocatorFailure({ page, elementDescription, oldLocator, dom
       continue;
     }
 
+    // The model can correctly conclude — per its OWN reasoning — that the
+    // element still exists and the real cause is timing/visibility/env, while
+    // still literally re-proposing the exact failing selector. That would
+    // trivially pass the live-match check below (the element IS there), which
+    // would otherwise get accepted as a "verified fix" whose old and new
+    // locator are identical. Reject it here as a non-fix instead: it costs
+    // one attempt and gives the model a chance to either find a genuinely
+    // different element or make the same "not a locator issue" call again —
+    // either way it never reaches the live-match check as a false positive.
+    if (result.suggestedLocator.trim() === oldLocator.trim()) {
+      log(`Attempt ${attempt} re-proposed the exact failing locator — not a fix. ${result.rootCause}`, 'analyzing');
+      lastIdenticalRootCause = result.rootCause;
+      previousAttempts.push({
+        locator: result.suggestedLocator,
+        reason: 'identical to the locator that is already failing — not a fix; propose a different element or state plainly that none is needed',
+      });
+      continue;
+    }
+
     const matchCount = await page.locator(result.suggestedLocator).count().catch(() => 0);
     if (matchCount === 1) {
       log(`Live validation passed on attempt ${attempt} — selector resolves to exactly 1 element`, 'verifying');
@@ -333,7 +357,9 @@ async function analyzeLocatorFailure({ page, elementDescription, oldLocator, dom
 
   log(`Exhausted ${MAX_HEALING_ATTEMPTS} attempts without a live-verified locator.`);
   return {
-    rootCause: `Tried ${MAX_HEALING_ATTEMPTS} candidate locators across ${previousAttempts.length} attempts; none resolved to exactly one live element.`,
+    rootCause: lastIdenticalRootCause
+      ? `The AI determined this is not a locator problem — the originally targeted element is still present, so the failure is more likely timing, visibility, or an environment issue. ${lastIdenticalRootCause}`
+      : `Tried ${MAX_HEALING_ATTEMPTS} candidate locators across ${previousAttempts.length} attempts; none resolved to exactly one live element.`,
     suggestedLocator: null, confidence: 0, resolvedBy: 'none', liveVerified: false, attempts: MAX_HEALING_ATTEMPTS,
   };
 }
